@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Operator Core — Ecommerce AI Team',
-  description: 'A cinematic operator cockpit for ecommerce AI systems powered by n8n.',
+  title: 'Workflow Console — n8n Operations',
+  description: 'Connect, run, and monitor workflows already built in your n8n account.',
 };
 
 export default function RootLayout({
@@ -12,7 +12,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
+    <html lang="en">
       <body>{children}</body>
     </html>
   );
