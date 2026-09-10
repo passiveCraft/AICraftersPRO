@@ -2,9 +2,11 @@
 
 import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Activity, ArrowUpRight, AudioLines, CircleDot, Focus, Link2, Network, Pause, Play, SlidersHorizontal } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Activity, ArrowUpRight, AudioLines, CircleDot, Focus, Network, Pause, Play, SlidersHorizontal } from 'lucide-react';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { ActivityPanel, ConnectionPanel, WorkflowPanel, useN8n } from '@/components/n8n-panels';
+import { WorkflowStudio } from '@/components/workflow-studio';
+import type { Workflow } from '@/lib/n8n-types';
 
 type Panel = 'connection' | 'workflows' | 'activity' | null;
 
@@ -129,20 +131,23 @@ function SpatialCore({ paused }: { paused: boolean }) {
 }
 
 export default function Home() {
+  const n8n = useN8n();
   const [panel, setPanel] = useState<Panel>(null);
   const [paused, setPaused] = useState(false);
   const [focus, setFocus] = useState(false);
+  const [studio, setStudio] = useState<Workflow | 'new' | null>(null);
   useEffect(() => {
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') setFocus(false); };
     window.addEventListener('keydown', escape);
     return () => window.removeEventListener('keydown', escape);
   }, []);
+  if (studio) return <WorkflowStudio workflow={studio === 'new' ? null : studio} instanceUrl={n8n.data.instanceUrl} onClose={() => setStudio(null)} onChanged={n8n.refresh} />;
   return (
     <main className={`observatory ${focus ? 'is-focused' : ''}`}>
       <header className="topbar chrome">
         <Link className="brand" href="/" aria-label="Operator Core home"><span className="brand-symbol"><AudioLines size={20} strokeWidth={1.5} /></span><span>OPERATOR<span className="brand-core"> / CORE</span></span></Link>
         <div className="top-center"><span className="hairline" /> Your AI workspace <span className="hairline" /></div>
-        <button className="connection-status" onClick={() => setPanel('connection')}><span className="status-dot" /> Not connected <ArrowUpRight size={14} /></button>
+        <button className="connection-status" onClick={() => setPanel('connection')}><span className={`status-dot ${n8n.data.connected && !n8n.error ? 'connected' : ''}`} /> {n8n.busy === 'loading' ? 'Checking connection' : n8n.error && n8n.data.connected ? 'Check connection' : n8n.data.connected ? 'n8n connected' : 'Not connected'} <ArrowUpRight size={14} /></button>
       </header>
       <nav className="tool-rail chrome" aria-label="Workspace tools">
         <button className="rail-button selected" aria-label="Core visualization" title="Core visualization" onClick={() => setPanel(null)}><CircleDot size={20} strokeWidth={1.4} /></button>
@@ -155,9 +160,9 @@ export default function Home() {
         <div className="stage-heading chrome"><span className="eyebrow">WORKSPACE / 01</span><h1>Intelligence, in view.</h1></div>
         <SpatialCore paused={paused} />
         <div className="coordinate top-coordinate chrome" aria-hidden="true">CORE / SPATIAL VIEW</div>
-        <div className="core-annotation annotation-left chrome"><span className="annotation-line" /><span className="eyebrow">CONNECTION</span><span>Awaiting n8n</span></div>
-        <div className="core-annotation annotation-right chrome"><span className="annotation-line" /><span className="eyebrow">WORKSPACE</span><span>No workflows connected</span></div>
-        <div className="core-caption chrome"><span className="standby-label"><span /> STANDBY</span><p>Ready when you are.</p><button onClick={() => setPanel('connection')}>Connect your n8n <ArrowUpRight size={15} /></button></div>
+        <div className="core-annotation annotation-left chrome"><span className="annotation-line" /><span className="eyebrow">CONNECTION</span><span>{n8n.data.connected ? n8n.error ? 'Needs attention' : 'n8n connected' : 'Awaiting n8n'}</span></div>
+        <div className="core-annotation annotation-right chrome"><span className="annotation-line" /><span className="eyebrow">WORKSPACE</span><span>{n8n.data.connected ? `${n8n.data.workflows.data.length}${n8n.data.workflows.nextCursor ? '+' : ''} workflows available` : 'No workflows connected'}</span></div>
+        <div className="core-caption chrome"><span className="standby-label"><span /> {n8n.data.connected ? n8n.error ? 'CONNECTION ISSUE' : 'CONNECTED' : 'STANDBY'}</span><p>{n8n.data.connected ? 'Your workspace, connected.' : 'Ready when you are.'}</p><button onClick={() => setPanel(n8n.data.connected ? 'workflows' : 'connection')}>{n8n.data.connected ? 'Explore workflows' : 'Connect your n8n'} <ArrowUpRight size={15} /></button></div>
       </section>
       <footer className="bottom-edge chrome"><span><span className="small-cross">+</span> Private workspace</span><span>Ambient visualization</span></footer>
       <fieldset className="view-dock" aria-label="Visualization controls">
@@ -166,18 +171,13 @@ export default function Home() {
         <button aria-label={focus ? 'Exit focus view' : 'Enter focus view'} aria-pressed={focus} className={focus ? 'active' : ''} onClick={() => setFocus(!focus)}><Focus size={17} /><span>{focus ? 'Exit focus' : 'Focus'}</span></button>
       </fieldset>
       <Sheet open={panel !== null} onOpenChange={(open) => { if (!open) setPanel(null); }}>
-        <SheetContent className="workspace-panel">
+        <SheetContent className={`workspace-panel ${panel === 'workflows' && n8n.data.connected ? 'wide-panel' : ''}`}>
           <SheetHeader><span className="eyebrow">OPERATOR / CORE</span>
             <SheetTitle>{panel === 'connection' ? 'Connection' : panel === 'workflows' ? 'Your workflows' : 'Activity'}</SheetTitle>
-            <SheetDescription>{panel === 'connection' ? 'Your n8n account powers this workspace.' : panel === 'workflows' ? 'Workflows you build in n8n will appear here.' : 'Executions and results will appear here.'}</SheetDescription>
+            <SheetDescription>{panel === 'connection' ? 'Your n8n account powers this workspace.' : panel === 'workflows' ? 'Explore the workflows and connections in your n8n account.' : 'Execution history from your n8n instance.'}</SheetDescription>
           </SheetHeader>
-          <div className="panel-empty">
-            <div className="empty-glyph">{panel === 'connection' ? <Link2 size={27} strokeWidth={1} /> : panel === 'workflows' ? <Network size={27} strokeWidth={1} /> : <Activity size={27} strokeWidth={1} />}</div>
-            <h2>{panel === 'connection' ? 'Awaiting connection' : panel === 'workflows' ? 'A clear workspace.' : 'Nothing running yet.'}</h2>
-            <p>{panel === 'connection' ? 'This is the visual interface preview. Secure n8n account connection is the next integration step.' : 'Connect your n8n account when your workflows are ready.'}</p>
-            {panel !== 'connection' && <Button variant="outline" onClick={() => setPanel('connection')}>Connection settings <ArrowUpRight size={15} /></Button>}
-          </div>
-          <div className="panel-footnote"><span className="status-dot" /> No account connected</div>
+          {panel === 'connection' ? <ConnectionPanel state={n8n} /> : panel === 'workflows' ? <WorkflowPanel state={n8n} onConnect={() => setPanel('connection')} onOpen={(item) => { setPanel(null); setStudio(item); }} onCreate={() => { setPanel(null); setStudio('new'); }} /> : <ActivityPanel state={n8n} onConnect={() => setPanel('connection')} />}
+          <div className="panel-footnote"><span className={`status-dot ${n8n.data.connected ? 'connected' : ''}`} /> {n8n.data.connected ? 'Read from your n8n account' : 'No account connected'}</div>
         </SheetContent>
       </Sheet>
     </main>
