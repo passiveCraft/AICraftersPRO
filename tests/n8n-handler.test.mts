@@ -21,7 +21,8 @@ function fixture() {
     const key = new Headers(init?.headers).get('X-N8N-API-KEY');
     if (key === 'invalid-test-key') return Response.json({ private: 'do-not-return' }, { status: 401 });
     if (url.pathname.endsWith('/executions')) return key === 'workflow-only-key' ? Response.json({}, { status: 403 }) : Response.json({ data: [{ id: 'e1', workflowId: 'w1', status: 'success' }], nextCursor: 'more-executions' });
-    if (url.pathname.endsWith('/workflows/w1')) return Response.json({ id: 'w1', name: 'Connected workflow', nodes: [], credentials: 'private' });
+    if (url.pathname.endsWith('/workflows/w1')) return Response.json({ id: 'w1', name: 'Connected workflow', active: true, nodes: [{ id: 'hook', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'demo-hook' } }], credentials: 'private' });
+    if (url.pathname.endsWith('/webhook/demo-hook')) return Response.json({ accepted: true });
     return Response.json({ data: [{ id: url.searchParams.has('cursor') ? 'w2' : 'w1', name: 'Connected workflow', active: true, nodes: [] }], nextCursor: url.searchParams.has('cursor') ? null : 'opaque+/=' });
   };
   const request = (owner: string | null, method = 'GET', body?: unknown, query = '', origin = 'https://dashboard.test') => new Request(`https://dashboard.test/api/n8n${query}`, { method, headers: { ...(owner ? { 'oai-authenticated-user-id': owner } : {}), Origin: origin, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -62,6 +63,14 @@ test('disconnect deletes only the current member’s saved connection', async ()
   const f = fixture(); await f.connect('a'); await f.connect('b');
   const response = await handleN8nRequest(f.request('a', 'DELETE'), f.bindings, f.fetcher);
   assert.equal(response.status, 200); assert.equal(f.rows.has('a'), false); assert.equal(f.rows.has('b'), true);
+});
+test('active webhook workflows accept bounded test input without exposing the API key', async () => {
+  const f = fixture(); await f.connect('a');
+  const response = await handleN8nRequest(f.request('a', 'POST', { orderId: 'DEMO-1' }, '?operation=trigger&workflowId=w1'), f.bindings, f.fetcher);
+  assert.equal(response.status, 200);
+  const body = await response.text(); assert.deepEqual(JSON.parse(body), { status: 'success', output: { accepted: true } });
+  assert.ok(f.seen.some(url => url.endsWith('/webhook/demo-hook')));
+  assert.ok(!body.includes('test-api-key'));
 });
 test('unauthenticated and cross-site mutations fail before any upstream request', async () => {
   const f = fixture();
