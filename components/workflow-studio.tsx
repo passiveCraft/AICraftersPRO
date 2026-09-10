@@ -46,6 +46,7 @@ export function WorkflowStudio({ workflow: initial, instanceUrl, onClose, onChan
   const [error, setError] = useState('');
   const [dirty, setDirty] = useState(!initial?.id);
   const [parametersText, setParametersText] = useState('{}');
+  const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
   const drag = useRef<{ id: string; startX: number; startY: number; origin: [number, number] } | null>(null);
   const selected = workflow.nodes.find(node => node.id === selectedId) || null;
 
@@ -99,6 +100,15 @@ export function WorkflowStudio({ workflow: initial, instanceUrl, onClose, onChan
     setWorkflow(old => ({ ...old, nodes: old.nodes.filter(node => node.id !== selected.id), edges: old.edges.filter(edge => edge.from !== selected.name && edge.to !== selected.name) }));
     setSelectedId(null); setDirty(true); setMessage('Unsaved changes');
   }
+  function connectTo(target: WorkflowNode) {
+    const source = workflow.nodes.find(node => node.id === connectingFrom);
+    if (!source || source.id === target.id) { setConnectingFrom(null); return; }
+    if (!workflow.edges.some(edge => edge.from === source.name && edge.to === target.name)) {
+      setWorkflow(old => ({ ...old, edges: [...old.edges, { from: source.name, to: target.name, type: 'main', output: 0, input: 0 }] }));
+      setDirty(true); setMessage(`Connected ${source.name} to ${target.name}`);
+    }
+    setConnectingFrom(null);
+  }
   function applyParameters() {
     try { const value = JSON.parse(parametersText); if (!value || Array.isArray(value) || typeof value !== 'object') throw new Error(); updateNode({ parameters: value }); setError(''); }
     catch { setError('Parameters must be a valid JSON object.'); }
@@ -126,10 +136,10 @@ export function WorkflowStudio({ workflow: initial, instanceUrl, onClose, onChan
     </header>
     <section className={`studio-workspace ${libraryOpen ? 'has-library' : ''} ${selected || mode === 'ai' ? 'has-inspector' : ''}`}>
       {libraryOpen && <aside className="node-library is-open"><div className="library-head"><div><span className="studio-kicker">BUILD</span><h2>Add a step</h2></div><button onClick={() => setLibraryOpen(false)} aria-label="Close node library"><X size={17} /></button></div><div className="library-search"><Search size={15} /><Input placeholder="Search steps" value={query} onChange={event => setQuery(event.target.value)} /></div><div className="library-list">{filtered.map(item => { const Icon = item.icon; return <button key={item.type} onClick={() => addNode(item)}><span><Icon size={18} /></span><div><strong>{item.label}</strong><small>{item.description}</small></div><Plus size={14} /></button>; })}</div><p className="library-note">This starter library uses native n8n nodes. Existing community and AI nodes remain visible and editable when loaded.</p></aside>}
-      <div className="studio-canvas" onWheel={event => { event.preventDefault(); setScale(old => Math.max(.32, Math.min(1.5, old - event.deltaY * .0007))); }}>
+      <div className={`studio-canvas ${connectingFrom ? 'is-connecting' : ''}`} onClick={() => setConnectingFrom(null)} onWheel={event => { event.preventDefault(); setScale(old => Math.max(.32, Math.min(1.5, old - event.deltaY * .0007))); }}>
         <div className="canvas-grid" style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${scale})` }}>
           <svg className="studio-edges" width="4000" height="2600" aria-hidden="true">{workflow.edges.map((edge, index) => { const from = byName.get(edge.from), to = byName.get(edge.to); if (!from || !to) return null; const x1 = from.position[0] + 220, y1 = from.position[1] + 52, x2 = to.position[0], y2 = to.position[1] + 52, bend = Math.max(70, Math.abs(x2 - x1) * .45); return <g key={`${edge.from}-${edge.to}-${index}`}><path className="edge-halo" d={`M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`} /><path className="edge-line" d={`M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`} /></g>; })}</svg>
-          {workflow.nodes.map((node, index) => { const Icon = iconFor(node.type); return <button key={node.id} className={`studio-node ${selectedId === node.id ? 'is-selected' : ''} ${node.disabled ? 'is-disabled' : ''}`} style={{ transform: `translate(${node.position[0]}px, ${node.position[1]}px)` }} onClick={event => { event.stopPropagation(); setSelectedId(node.id); }} onPointerDown={event => { if ((event.target as HTMLElement).closest('.node-drag')) drag.current = { id: node.id, startX: event.clientX, startY: event.clientY, origin: node.position }; }}><span className="node-input" /><span className="node-drag"><Grip size={13} /></span><span className="node-icon"><Icon size={23} strokeWidth={1.6} /></span><span className="node-copy"><small>{index === 0 ? 'TRIGGER / ENTRY' : cleanType(node.type).toUpperCase()}</small><strong>{node.name}</strong></span><span className="node-output" /></button>; })}
+          {workflow.nodes.map((node, index) => { const Icon = iconFor(node.type); return <button key={node.id} className={`studio-node ${selectedId === node.id ? 'is-selected' : ''} ${connectingFrom === node.id ? 'is-connecting-from' : ''} ${node.disabled ? 'is-disabled' : ''}`} style={{ transform: `translate(${node.position[0]}px, ${node.position[1]}px)` }} onClick={event => { event.stopPropagation(); setSelectedId(node.id); }} onPointerDown={event => { if ((event.target as HTMLElement).closest('.node-drag')) drag.current = { id: node.id, startX: event.clientX, startY: event.clientY, origin: node.position }; }}><span className="node-input" title="Connect into this step" onClick={event => { event.stopPropagation(); connectTo(node); }} /><span className="node-drag"><Grip size={13} /></span><span className="node-icon"><Icon size={23} strokeWidth={1.6} /></span><span className="node-copy"><small>{index === 0 ? 'TRIGGER / ENTRY' : cleanType(node.type).toUpperCase()}</small><strong>{node.name}</strong></span><span className="node-output" title="Start a connection" onClick={event => { event.stopPropagation(); setConnectingFrom(node.id); setMessage(`Connect ${node.name} to another step`); }} /></button>; })}
           {!workflow.nodes.length && <button className="canvas-empty" onClick={() => setLibraryOpen(true)}><span><Plus size={22} /></span><strong>Start with a trigger</strong><small>Add your first n8n step</small></button>}
         </div>
         <div className="canvas-toolbar"><button onClick={() => setLibraryOpen(true)}><Plus size={17} /> Add step</button><span /><button onClick={() => setScale(old => Math.max(.32, old - .1))} aria-label="Zoom out"><ZoomOut size={17} /></button><button onClick={() => fit()}><MousePointer2 size={16} /> Fit</button><button onClick={() => setScale(old => Math.min(1.5, old + .1))} aria-label="Zoom in"><ZoomIn size={17} /></button><em>{Math.round(scale * 100)}%</em></div>
