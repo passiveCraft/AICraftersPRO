@@ -1,0 +1,196 @@
+{
+  "name": "Operator Core · Local Order Test",
+  "nodes": [
+    {
+      "id": "test-webhook",
+      "name": "Receive sample order",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "webhookId": "operator-core-local-order-check",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "operator-core-test-9f463b78-182e-4bab-910c-7f72b822d614",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "test-normalize",
+      "name": "Read order details",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        250,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "field-0",
+              "name": "orderId",
+              "value": "={{ $json.body.orderId }}",
+              "type": "string"
+            },
+            {
+              "id": "field-1",
+              "name": "customer",
+              "value": "={{ $json.body.customer }}",
+              "type": "string"
+            },
+            {
+              "id": "field-2",
+              "name": "total",
+              "value": "={{ Number($json.body.total) }}",
+              "type": "number"
+            },
+            {
+              "id": "field-3",
+              "name": "currency",
+              "value": "={{ $json.body.currency }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      }
+    },
+    {
+      "id": "test-priority",
+      "name": "Classify order priority",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        -80
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "field-0",
+              "name": "priority",
+              "value": "={{ $json.total >= 150 ? 'priority' : 'standard' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "test-result",
+      "name": "Prepare operator result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        750,
+        0
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "field-0",
+              "name": "status",
+              "value": "ready_for_review",
+              "type": "string"
+            },
+            {
+              "id": "field-1",
+              "name": "nextAction",
+              "value": "={{ $json.priority === 'priority' ? 'Review priority order' : 'Review standard order' }}",
+              "type": "string"
+            },
+            {
+              "id": "field-2",
+              "name": "processedBy",
+              "value": "n8n",
+              "type": "string"
+            },
+            {
+              "id": "field-3",
+              "name": "testOnly",
+              "value": true,
+              "type": "boolean"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "id": "test-respond",
+      "name": "Return test result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        1000,
+        0
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Receive sample order": {
+      "main": [
+        [
+          {
+            "node": "Read order details",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read order details": {
+      "main": [
+        [
+          {
+            "node": "Classify order priority",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Classify order priority": {
+      "main": [
+        [
+          {
+            "node": "Prepare operator result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare operator result": {
+      "main": [
+        [
+          {
+            "node": "Return test result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all"
+  }
+}
