@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkPublicHost, decryptKey, encryptKey, execution, isPublicAddress, n8nGet, n8nRequest, normalizeInstance, page, workflow } from '../lib/n8n-core.ts';
+import { checkPublicHost, decryptKey, encryptKey, execution, executionDetail, isPublicAddress, n8nGet, n8nRequest, normalizeInstance, page, workflow } from '../lib/n8n-core.ts';
 
 test('normalizes cloud, API-root and reverse-proxy instance URLs', () => {
   assert.equal(normalizeInstance(' https://demo.app.n8n.cloud/api/v1/ '), 'https://demo.app.n8n.cloud');
@@ -80,4 +80,15 @@ test('executions return metadata only and invalid API shapes fail closed', () =>
   assert.ok(!JSON.stringify(result).includes('private'));
   assert.throws(() => page({ results: [] }, workflow));
   assert.throws(() => workflow({ title: 'Not n8n' }));
+});
+test('execution details retain safe output for every n8n node in the run session', () => {
+  const result = executionDetail({ id: 'e-2', workflowId: 'w-1', status: 'success', data: { resultData: { lastNodeExecuted: 'Return', runData: {
+    Receive: [{ executionTime: 2, data: { main: [[{ json: { prompt: 'hello' } }]] } }],
+    Generate: [{ executionTime: 25, data: { main: [[{ json: { text: 'answer', authorization: 'secret' } }]] } }],
+    Return: [{ executionTime: 1, data: { main: [[{ json: { accepted: true } }]] } }],
+  } } } });
+  assert.equal(result.steps.length, 3);
+  assert.deepEqual(result.steps.map(step => step.name), ['Receive', 'Generate', 'Return']);
+  assert.deepEqual(result.steps[1].output, [{ text: 'answer' }]);
+  assert.ok(!JSON.stringify(result).includes('secret'));
 });

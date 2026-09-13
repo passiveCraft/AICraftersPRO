@@ -15,20 +15,27 @@ function fixture() {
   }; } }; } } as unknown as D1Database;
   const bindings: Bindings = { DB, N8N_ENCRYPTION_KEY: 'b'.repeat(64) };
   const seen: string[] = [];
+  const seenRequests: string[] = [];
+  let manualWorkflow: Record<string, unknown> = { id: 'w3', name: 'Manual workflow', active: false, nodes: [{ id: 'manual', name: 'When clicking Execute workflow', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} }, { id: 'work', name: 'Do work', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} }], connections: { 'When clicking Execute workflow': { main: [[{ node: 'Do work', type: 'main', index: 0 }]] } }, settings: {} };
   const fetcher: typeof fetch = async (input, init) => {
-    const url = new URL(String(input)); seen.push(url.toString());
+    const url = new URL(String(input)); seen.push(url.toString()); seenRequests.push(`${init?.method || 'GET'} ${url.pathname}`);
     if (url.hostname === 'cloudflare-dns.com') return Response.json({ Answer: [{ type: 1, data: '1.1.1.1' }] });
     const key = new Headers(init?.headers).get('X-N8N-API-KEY');
     if (key === 'invalid-test-key') return Response.json({ private: 'do-not-return' }, { status: 401 });
     if (url.pathname.endsWith('/credentials')) return Response.json({ data: [{ id: 'cred-1', name: 'Gemini account', type: 'googlePalmApi', data: { apiKey: 'private' } }], nextCursor: null });
     if (url.pathname.endsWith('/executions')) return key === 'workflow-only-key' ? Response.json({}, { status: 403 }) : Response.json({ data: [{ id: 'e1', workflowId: 'w1', status: 'success' }], nextCursor: 'more-executions' });
+    if (url.pathname.endsWith('/workflows/w2/activate')) return Response.json({ id: 'w2', name: 'Inactive webhook', active: true, nodes: [{ id: 'hook-2', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'inactive-hook' } }] });
+    if (url.pathname.endsWith('/workflows/w2')) return Response.json({ id: 'w2', name: 'Inactive webhook', active: false, nodes: [{ id: 'hook-2', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'inactive-hook' } }] });
+    if (url.pathname.endsWith('/workflows/w3/activate')) { manualWorkflow = { ...manualWorkflow, active: true }; return Response.json(manualWorkflow); }
+    if (url.pathname.endsWith('/workflows/w3') && init?.method === 'PUT') { manualWorkflow = { ...JSON.parse(String(init.body)), id: 'w3', active: false }; return Response.json(manualWorkflow); }
+    if (url.pathname.endsWith('/workflows/w3')) return Response.json(manualWorkflow);
     if (url.pathname.endsWith('/workflows/w1')) return Response.json({ id: 'w1', name: 'Connected workflow', active: true, nodes: [{ id: 'hook', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'demo-hook' } }], credentials: 'private' });
-    if (url.pathname.endsWith('/webhook/demo-hook')) return Response.json({ accepted: true });
+    if (url.pathname.endsWith('/webhook/demo-hook') || url.pathname.endsWith('/webhook/inactive-hook') || url.pathname.includes('/webhook/operator-core-')) return Response.json({ accepted: true });
     return Response.json({ data: [{ id: url.searchParams.has('cursor') ? 'w2' : 'w1', name: 'Connected workflow', active: true, nodes: [] }], nextCursor: url.searchParams.has('cursor') ? null : 'opaque+/=' });
   };
   const request = (owner: string | null, method = 'GET', body?: unknown, query = '', origin = 'https://dashboard.test') => new Request(`https://dashboard.test/api/n8n${query}`, { method, headers: { ...(owner ? { 'oai-authenticated-user-id': owner } : {}), Origin: origin, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const connect = (owner: string, apiKey = 'test-api-key') => handleN8nRequest(request(owner, 'POST', { instanceUrl: 'https://team.app.n8n.cloud', apiKey }), bindings, fetcher);
-  return { rows, bindings, fetcher, request, seen, connect };
+  return { rows, bindings, fetcher, request, seen, seenRequests, connect };
 }
 test('connect persists encrypted data, reload reads n8n, another member sees an empty workspace', async () => {
   const f = fixture(); const connected = await f.connect('member-a');
@@ -60,6 +67,13 @@ test('pagination and workflow inspection use the saved connection and exclude cr
   const credentials = await handleN8nRequest(f.request('a', 'GET', undefined, '?resource=credentials'), f.bindings, f.fetcher);
   const credentialText = await credentials.text(); assert.equal(credentials.status, 200); assert.ok(!credentialText.includes('apiKey')); assert.ok(credentialText.includes('googlePalmApi'));
 });
+test('workflow-filtered execution requests return an execution page instead of workflow details', async () => {
+  const f = fixture(); await f.connect('a');
+  const response = await handleN8nRequest(f.request('a', 'GET', undefined, '?resource=executions&workflowId=w1'), f.bindings, f.fetcher);
+  const body = await response.json() as { data?: Array<{ workflowId: string }> };
+  assert.equal(response.status, 200); assert.equal(body.data?.[0]?.workflowId, 'w1');
+  assert.ok(f.seen.some(url => url.includes('/api/v1/executions?') && url.includes('workflowId=w1')));
+});
 test('disconnect deletes only the current member’s saved connection', async () => {
   const f = fixture(); await f.connect('a'); await f.connect('b');
   const response = await handleN8nRequest(f.request('a', 'DELETE'), f.bindings, f.fetcher);
@@ -72,6 +86,28 @@ test('active webhook workflows accept bounded test input without exposing the AP
   const body = await response.text(); assert.deepEqual(JSON.parse(body), { status: 'success', output: { accepted: true } });
   assert.ok(f.seen.some(url => url.endsWith('/webhook/demo-hook')));
   assert.ok(!body.includes('test-api-key'));
+});
+test('executing an inactive webhook publishes it before invoking its production URL', async () => {
+  const f = fixture(); await f.connect('a');
+  const response = await handleN8nRequest(f.request('a', 'POST', { orderId: 'DEMO-2' }, '?operation=trigger&workflowId=w2'), f.bindings, f.fetcher);
+  assert.equal(response.status, 200);
+  const activation = f.seen.findIndex(url => url.endsWith('/api/v1/workflows/w2/activate'));
+  const invocation = f.seen.findIndex(url => url.endsWith('/webhook/inactive-hook'));
+  assert.ok(activation >= 0); assert.ok(invocation > activation);
+});
+test('manual workflows get an idempotent dashboard runner and execute without editor-session access', async () => {
+  const f = fixture(); await f.connect('a');
+  const first = await handleN8nRequest(f.request('a', 'POST', { source: 'dashboard' }, '?operation=trigger&workflowId=w3'), f.bindings, f.fetcher);
+  assert.equal(first.status, 200);
+  assert.equal((await first.json() as { runnerInstalled: boolean }).runnerInstalled, true);
+  assert.ok(f.seenRequests.includes('PUT /api/v1/workflows/w3'));
+  assert.ok(f.seenRequests.includes('POST /api/v1/workflows/w3/activate'));
+  assert.ok(f.seen.some(url => url.includes('/webhook/operator-core-')));
+
+  const putCount = f.seenRequests.filter(item => item === 'PUT /api/v1/workflows/w3').length;
+  const second = await handleN8nRequest(f.request('a', 'POST', { source: 'dashboard' }, '?operation=trigger&workflowId=w3'), f.bindings, f.fetcher);
+  assert.equal(second.status, 200);
+  assert.equal(f.seenRequests.filter(item => item === 'PUT /api/v1/workflows/w3').length, putCount);
 });
 test('unauthenticated and cross-site mutations fail before any upstream request', async () => {
   const f = fixture();

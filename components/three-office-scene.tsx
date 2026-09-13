@@ -2,11 +2,12 @@
 
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import type { Execution, Workflow, WorkflowNode } from '@/lib/n8n-types';
+import type { Execution, ExecutionDetail, Workflow, WorkflowNode } from '@/lib/n8n-types';
 
 type Props = {
   workflows: Workflow[];
   executions: Execution[];
+  session?: ExecutionDetail | null;
   light: boolean;
   zoom: number;
   selectedWorkflowId?: string;
@@ -17,6 +18,7 @@ type Props = {
   runningWorkflowId?: string;
   onZoomChange: (zoom: number) => void;
   onInspect: (workflow: Workflow, node?: WorkflowNode) => void;
+  onExecute?: (workflow: Workflow) => void;
 };
 
 const colors = ['#5adeb7', '#8fd3f4', '#eadc8f', '#e69393', '#98a5ef', '#bfa2e3'];
@@ -210,16 +212,18 @@ function buildCourier(color: string, dark: boolean) {
   return courier;
 }
 
-export function ThreeOfficeScene({ workflows, executions, light, zoom, selectedWorkflowId, selectedNodeId, resetViewKey, labelsVisible, layoutMode, runningWorkflowId, onZoomChange, onInspect }: Props) {
+export function ThreeOfficeScene({ workflows, executions, session, light, zoom, selectedWorkflowId, selectedNodeId, resetViewKey, labelsVisible, layoutMode, runningWorkflowId, onZoomChange, onInspect, onExecute }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const callbackRef = useRef(onInspect);
+  const executeCallbackRef = useRef(onExecute);
   const zoomCallbackRef = useRef(onZoomChange);
   const zoomRef = useRef(zoom);
   const resetRef = useRef(resetViewKey);
   const labelsRef = useRef(labelsVisible);
   const viewTargetRef = useRef({ x: 0, y: 0, z: 0 });
   useEffect(() => { callbackRef.current = onInspect; }, [onInspect]);
+  useEffect(() => { executeCallbackRef.current = onExecute; }, [onExecute]);
   useEffect(() => { zoomCallbackRef.current = onZoomChange; }, [onZoomChange]);
   useEffect(() => { zoomRef.current = zoom; }, [zoom]);
   useEffect(() => { resetRef.current = resetViewKey; }, [resetViewKey]);
@@ -350,7 +354,35 @@ export function ThreeOfficeScene({ workflows, executions, light, zoom, selectedW
         const person = buildPerson(stationColor, ni, !light); person.position.set(0, .35, 1.55); person.rotation.y = Math.PI; station.add(person); people.push(person);
         station.traverse(obj => { obj.userData.workflowId = workflow.id; obj.userData.nodeId = node.id; clickables.push(obj); });
         const labelPoint = new THREE.Vector3(pos.x + position.x + 1.1, .28, pos.z + position.z + 1.1);
-        addLabel(`office-agent-pill${node.disabled ? ' is-disabled' : ''}`, `<span class="node-name">${escapeHtml(node.name)}</span>`, labelPoint, workflow, node);
+
+        let statusHtml = '';
+        let statusClass = '';
+        if (session?.workflowId === workflow.id) {
+          const step = session.steps?.find(s => s.name === node.name);
+          if (step) {
+            statusClass = step.status === 'success' ? ' is-success' : ' is-error';
+            statusHtml = step.status === 'success'
+              ? `<span class="node-status-icon success"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></span>`
+              : `<span class="node-status-icon error"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg></span>`;
+          }
+        }
+        const displayName = node.name === "When clicking 'Execute workflow'" ? "Trigger" : node.name;
+        addLabel(`office-agent-pill${node.disabled ? ' is-disabled' : ''}${statusClass}`, `<span class="node-name">${escapeHtml(displayName)}</span>${statusHtml}`, labelPoint, workflow, node);
+
+        if (runningWorkflowId === workflow.id && ni === 0 && !session?.steps?.find(s => s.name === node.name)) {
+          const waitPoint = new THREE.Vector3(pos.x + position.x, .28, pos.z + position.z - 1.1);
+          const waitHtml = `<span class="wait-text">Waiting for event...</span>`;
+          addLabel(`node-wait-badge`, waitHtml, waitPoint, workflow, node);
+        }
+        if (ni === 0) {
+          const playPoint = new THREE.Vector3(pos.x + position.x - 3.0, .28, pos.z + position.z + 1.1);
+          const playHtml = `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg><span class="play-text">Execute workflow</span>`;
+          const btn = addLabel(`node-play-button${runningWorkflowId === workflow.id ? ' is-running' : ''}`, playHtml, playPoint, workflow, node);
+          btn.element.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (executeCallbackRef.current) executeCallbackRef.current(workflow);
+          });
+        }
         if (layoutMode === 'islands' && islandGroup) islandRuntimes.set(`${workflow.id}:${node.id}`, { root: islandGroup, pod, workflowId: workflow.id, nodeId: node.id, position, labelPoint });
       });
     });
@@ -532,7 +564,8 @@ export function ThreeOfficeScene({ workflows, executions, light, zoom, selectedW
         vector.copy(item.point).project(camera);
         const x = Math.max(58, Math.min(host.clientWidth - 58, (vector.x * .5 + .5) * host.clientWidth));
         const y = Math.max(38, Math.min(host.clientHeight - 58, (-vector.y * .5 + .5) * host.clientHeight));
-        item.element.style.transform = `translate(${x}px,${y}px) translate(-50%,-50%)`;
+        const isPlayBtn = item.element.classList.contains('node-play-button');
+        item.element.style.transform = `translate(${x}px,${y}px) translate(${isPlayBtn ? '-100%' : '-50%'},-50%)`;
         item.element.style.opacity = vector.z > 1 ? '0' : '';
       });
       renderer.render(scene, camera); frame = requestAnimationFrame(animate);
@@ -544,7 +577,7 @@ export function ThreeOfficeScene({ workflows, executions, light, zoom, selectedW
       labelLayer.remove(); loadedTextures.forEach(texture => texture.dispose());
       scene.traverse(object => { const mesh = object as THREE.Mesh; mesh.geometry?.dispose(); const mats = Array.isArray(mesh.material) ? mesh.material : mesh.material ? [mesh.material] : []; mats.forEach(material => material.dispose()); }); renderer.dispose();
     };
-  }, [workflows, executions, light, selectedWorkflowId, selectedNodeId, layoutMode, runningWorkflowId]);
+  }, [workflows, executions, session, light, selectedWorkflowId, selectedNodeId, layoutMode, runningWorkflowId]);
 
   return <div className="three-office-scene" ref={hostRef}><canvas ref={canvasRef} tabIndex={0} aria-label="Interactive 3D workspace. Drag to move, use the wheel or trackpad to zoom, or pinch with two fingers." /></div>;
 }

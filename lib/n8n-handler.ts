@@ -60,31 +60,9 @@ export async function handleN8nRequest(request: Request, bindings: Bindings, fet
       if (instance !== 'http://localhost:5678') await checkPublicHost(instance, fetcher);
     }
     if (operation) {
-      if (!['create', 'createGemini', 'update', 'activate', 'deactivate', 'trigger'].includes(operation)) throw new ConnectionError('Unsupported workflow action.');
+      if (!['create', 'update', 'activate', 'deactivate', 'trigger'].includes(operation)) throw new ConnectionError('Unsupported workflow action.');
       const workflowId = requestUrl.searchParams.get('workflowId');
-      if (!['create', 'createGemini'].includes(operation) && (!workflowId || !/^[a-zA-Z0-9_-]{1,128}$/.test(workflowId))) throw new ConnectionError('Invalid workflow ID.');
-      if (operation === 'createGemini') {
-        if (request.method !== 'POST') throw new ConnectionError('Unsupported request method.', 405);
-        const credentials = page(await n8nGet(saved.instance_url, key, 'credentials', { limit: '100' }, fetcher), credential);
-        const gemini = credentials.data.find(item => item.type === 'googlePalmApi');
-        if (!gemini) throw new ConnectionError('Google Gemini needs a connected Google Gemini (PaLM) API credential in n8n before this workflow can be created.', 409);
-        const suffix = crypto.randomUUID().slice(0, 8);
-        const payload = {
-          name: 'Gemini · Creative Brief Studio',
-          nodes: [
-            { id: crypto.randomUUID(), name: 'Receive creative prompt', type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [0, 0], parameters: { httpMethod: 'POST', path: `operator-gemini-${suffix}`, responseMode: 'responseNode' } },
-            { id: crypto.randomUUID(), name: 'Create with Gemini', type: '@n8n/n8n-nodes-langchain.googleGemini', typeVersion: 1.1, position: [300, 0], parameters: { resource: 'text', operation: 'message', modelId: { __rl: true, value: 'models/gemini-2.5-flash', mode: 'list', cachedResultName: 'Gemini 2.5 Flash' }, messages: { values: [{ role: 'user', content: '={{ $json.body?.prompt || "Create one concise, original idea for a calm AI operations workspace." }}' }] }, simplify: true, jsonOutput: false, builtInTools: {}, options: { systemMessage: 'You are a concise creative partner. Return a polished response with a short title and 2–4 useful sentences. Do not use markdown tables.' } }, credentials: { googlePalmApi: { id: gemini.id, name: gemini.name } } },
-            { id: crypto.randomUUID(), name: 'Return creation', type: 'n8n-nodes-base.respondToWebhook', typeVersion: 1.4, position: [600, 0], parameters: { respondWith: 'json', responseBody: '={{ { "answer": $json.content?.parts?.[0]?.text || $json.text || JSON.stringify($json), "createdAt": $now } }}' } },
-          ],
-          connections: { 'Receive creative prompt': { main: [[{ node: 'Create with Gemini', type: 'main', index: 0 }]] }, 'Create with Gemini': { main: [[{ node: 'Return creation', type: 'main', index: 0 }]] } },
-          settings: { executionOrder: 'v1' },
-        };
-        const created = asRecord(await n8nRequest(saved.instance_url, key, 'workflows', { method: 'POST', body: payload }, fetcher));
-        const createdId = typeof created.id === 'string' || typeof created.id === 'number' ? `${created.id}` : '';
-        if (!createdId) throw new ConnectionError('n8n created the workflow without returning its ID.', 502);
-        const activated = await n8nRequest(saved.instance_url, key, `workflows/${createdId}/activate`, { method: 'POST' }, fetcher);
-        return Response.json(workflow(activated), { headers });
-      }
+      if (operation !== 'create' && (!workflowId || !/^[a-zA-Z0-9_-]{1,128}$/.test(workflowId))) throw new ConnectionError('Invalid workflow ID.');
       if (operation === 'activate' || operation === 'deactivate') {
         if (request.method !== 'POST') throw new ConnectionError('Unsupported request method.', 405);
         const raw = await n8nRequest(saved.instance_url, key, `workflows/${workflowId}/${operation}`, { method: 'POST' }, fetcher);
@@ -92,17 +70,47 @@ export async function handleN8nRequest(request: Request, bindings: Bindings, fet
       }
       if (operation === 'trigger') {
         if (request.method !== 'POST') throw new ConnectionError('Unsupported request method.', 405);
-        const latest = asRecord(await n8nGet(saved.instance_url, key, `workflows/${workflowId}`, {}, fetcher));
-        if (latest.active !== true) throw new ConnectionError('Activate this workflow before sending a webhook event.');
-        const webhook = asList(latest.nodes).map(asRecord).find(node => typeof node.type === 'string' && node.type.endsWith('.webhook') && node.disabled !== true);
-        if (!webhook) throw new ConnectionError('This workflow does not have an enabled webhook trigger.');
+        let latest = asRecord(await n8nGet(saved.instance_url, key, `workflows/${workflowId}`, {}, fetcher));
+        let webhook = asList(latest.nodes).map(asRecord).find(node => typeof node.type === 'string' && node.type.endsWith('.webhook') && node.disabled !== true);
+        let runnerInstalled = false;
+        if (!webhook) {
+          const nodes = asList(latest.nodes).map(asRecord);
+          const manual = nodes.find(node => typeof node.type === 'string' && node.type.endsWith('.manualTrigger') && node.disabled !== true);
+          if (!manual || typeof manual.name !== 'string') throw new ConnectionError('This workflow has no manual or webhook entry point that the dashboard can execute.');
+          const connections = asRecord(latest.connections);
+          const outgoing = connections[manual.name];
+          if (!outgoing) throw new ConnectionError('The Manual Trigger is not connected to a step, so there is nothing to execute.');
+          const names = new Set(nodes.map(node => typeof node.name === 'string' ? node.name : ''));
+          let runnerName = 'Operator Core Run Trigger';
+          for (let suffix = 2; names.has(runnerName); suffix++) runnerName = `Operator Core Run Trigger ${suffix}`;
+          const manualPosition = asList(manual.position);
+          const runnerPath = `operator-core-${crypto.randomUUID()}-${crypto.randomUUID()}`;
+          webhook = { id: crypto.randomUUID(), name: runnerName, type: 'n8n-nodes-base.webhook', typeVersion: 2, position: [Number(manualPosition[0]) || 0, (Number(manualPosition[1]) || 0) + 180], parameters: { httpMethod: 'POST', path: runnerPath, responseMode: 'onReceived', options: {} } };
+          const payload = { name: latest.name, nodes: [...nodes, webhook], connections: { ...connections, [runnerName]: outgoing }, settings: asRecord(latest.settings) };
+          latest = asRecord(await n8nRequest(saved.instance_url, key, `workflows/${workflowId}`, { method: 'PUT', body: payload }, fetcher));
+          runnerInstalled = true;
+        }
         const parameters = asRecord(webhook.parameters); const method = (typeof parameters.httpMethod === 'string' ? parameters.httpMethod : 'GET').toUpperCase(); const path = (typeof parameters.path === 'string' ? parameters.path : '').replace(/^\/+/, '');
-        if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path || path.length > 500 || /[\\?#]/.test(path) || Array.from(path).some(char => char.charCodeAt(0) < 32)) throw new ConnectionError('The workflow webhook settings are not valid.');
+        if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || !path || path.length > 500 || /[\\?#]/.test(path) || path.split('/').some(part => part === '.' || part === '..') || Array.from(path).some(char => char.charCodeAt(0) < 32)) throw new ConnectionError('The workflow webhook settings are not valid.');
         const text = await request.text(); if (text.length > 128_000) throw new ConnectionError('The test input is too large.', 413);
         let input: unknown; try { input = text ? JSON.parse(text) : {}; } catch { throw new ConnectionError('The test input must be valid JSON.'); }
+        let activated = false;
+        if (latest.active !== true) {
+          await n8nRequest(saved.instance_url, key, `workflows/${workflowId}/activate`, { method: 'POST' }, fetcher);
+          activated = true;
+        }
         const target = new URL(`webhook/${path}`, `${saved.instance_url}/`);
         if (target.origin !== new URL(saved.instance_url).origin) throw new ConnectionError('The workflow webhook address is not valid.');
-        const response = await fetcher(target, { method, headers: { Accept: 'application/json, text/plain', ...(method === 'GET' || method === 'DELETE' ? {} : { 'Content-Type': 'application/json' }) }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(input), redirect: 'manual', signal: AbortSignal.timeout(60000), cache: 'no-store' });
+        if ((method === 'GET' || method === 'DELETE') && input && typeof input === 'object' && !Array.isArray(input)) {
+          for (const [name, value] of Object.entries(input)) if (['string', 'number', 'boolean'].includes(typeof value)) target.searchParams.set(name, String(value));
+        }
+        const requestInit: RequestInit = { method, headers: { Accept: 'application/json, text/plain', ...(method === 'GET' || method === 'DELETE' ? {} : { 'Content-Type': 'application/json' }) }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(input), redirect: 'manual', signal: AbortSignal.timeout(60000), cache: 'no-store' };
+        let response = await fetcher(target, requestInit);
+        // n8n can need a brief moment to register a newly published production webhook.
+        for (let attempt = 0; activated && response.status === 404 && attempt < 3; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+          response = await fetcher(target, requestInit);
+        }
         if (!response.ok) {
           let diagnosis = '';
           try { const recent = page(await n8nGet(saved.instance_url, key, 'executions', { limit: '1', workflowId: workflowId!, status: 'error', includeData: 'false' }, fetcher), execution); const latest = recent.data[0]; if (latest) { const detail = executionDetail(await n8nGet(saved.instance_url, key, `executions/${latest.id}`, { includeData: 'true' }, fetcher)); diagnosis = detail.error ? ` ${detail.lastNode ? `${detail.lastNode}: ` : ''}${detail.error}` : ''; } } catch { /* Keep the webhook status when execution details are unavailable. */ }
@@ -110,7 +118,7 @@ export async function handleN8nRequest(request: Request, bindings: Bindings, fet
         }
         const resultText = (await response.text()).slice(0, 200_000); let output: unknown = resultText;
         try { output = resultText ? JSON.parse(resultText) : null; } catch { /* Return plain text safely. */ }
-        return Response.json({ status: 'success', output }, { headers });
+        return Response.json({ status: 'success', output, ...(runnerInstalled ? { runnerInstalled: true } : {}) }, { headers });
       }
       if (request.method !== 'POST' && request.method !== 'PUT') throw new ConnectionError('Unsupported request method.', 405);
       const draft = await readDraft(request);
@@ -125,11 +133,11 @@ export async function handleN8nRequest(request: Request, bindings: Bindings, fet
       return Response.json(workflow(raw), { headers });
     }
     const workflowId = requestUrl.searchParams.get('workflowId');
-    if (workflowId) {
+    const resource = requestUrl.searchParams.get('resource');
+    if (workflowId && !resource) {
       if (!/^[a-zA-Z0-9_-]{1,128}$/.test(workflowId)) throw new ConnectionError('Invalid workflow ID.');
       return Response.json(workflow(await n8nGet(saved.instance_url, key, `workflows/${workflowId}`, {}, fetcher)), { headers });
     }
-    const resource = requestUrl.searchParams.get('resource');
     const cursor = requestUrl.searchParams.get('cursor');
     if (cursor && cursor.length > 4096) throw new ConnectionError('Invalid page cursor.');
     if (resource) {
@@ -142,6 +150,11 @@ export async function handleN8nRequest(request: Request, bindings: Bindings, fet
       if (resource === 'credentials') return Response.json(page(await n8nGet(saved.instance_url, key, 'credentials', { limit: '100' }, fetcher), credential), { headers });
       const params: Record<string, string> = { limit: resource === 'workflows' ? '50' : '20' };
       if (resource === 'executions') params.includeData = 'false';
+      const resourceWorkflowId = requestUrl.searchParams.get('workflowId');
+      if (resource === 'executions' && resourceWorkflowId) {
+        if (!/^[a-zA-Z0-9_-]{1,128}$/.test(resourceWorkflowId)) throw new ConnectionError('Invalid workflow ID.');
+        params.workflowId = resourceWorkflowId;
+      }
       if (cursor) params.cursor = cursor;
       const raw = await n8nGet(saved.instance_url, key, resource, params, fetcher);
       return Response.json(resource === 'workflows' ? page(raw, workflow) : page(raw, execution), { headers });
