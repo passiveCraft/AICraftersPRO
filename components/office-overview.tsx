@@ -3,11 +3,11 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import {
-  Activity, AlertCircle, ArrowLeft, ArrowUpRight, Box, Check,
+  Activity, AlertCircle, ArrowLeft, ArrowUpRight, Box, Braces, Check,
   ChevronDown, ChevronRight, ChevronUp, Clock3, Code2, Eye, EyeOff,
   GitBranch, Globe2, Layers3, LayoutGrid, Loader2, Maximize2, Minus,
   Network, PanelRightClose, PanelRightOpen, Plus, RefreshCw, Search,
-  TerminalSquare, Trash2, Webhook,
+  Table2, TerminalSquare, Trash2, Webhook,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ThreeOfficeScene } from '@/components/three-office-scene';
@@ -85,7 +85,9 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [consoleStepName, setConsoleStepName] = useState<string | null>(null);
   const [consoleView, setConsoleView] = useState<'input' | 'output'>('output');
-  const [runLog, setRunLog] = useState<string[]>(() => [`ready · execute ${workflows[0]?.name || 'this workflow'} from this workspace`]);
+  const [consoleDisplay, setConsoleDisplay] = useState<'table' | 'json'>('table');
+  const [consoleSearch, setConsoleSearch] = useState('');
+  const [, setRunLog] = useState<string[]>(() => [`ready · execute ${workflows[0]?.name || 'this workflow'} from this workspace`]);
 
   useEffect(() => {
     setSidebar(localStorage.getItem('operator-sidebar') !== 'hidden');
@@ -254,6 +256,7 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
       const msg = timedOut
         ? 'Webhook timed out after 45 s — polling n8n for the execution…'
         : issue instanceof Error ? issue.message : 'Workflow run failed.';
+      if (!timedOut) setSessionError(msg);
       prependLogs(setRunLog, [`${t1} · ${timedOut ? 'timeout' : 'error'} · ${msg}`]);
 
       if (timedOut) {
@@ -294,7 +297,9 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
   const consoleInputNames = consoleWorkflow && consoleStep ? consoleWorkflow.edges.filter(edge => edge.to === consoleStep.name).map(edge => edge.from) : [];
   const consoleInput = session?.steps.filter(step => consoleInputNames.includes(step.name)).flatMap(step => step.output === undefined ? [] : Array.isArray(step.output) ? step.output : [step.output]);
   const consoleValue = consoleView === 'output' ? consoleStep?.output : consoleInput;
-  const consoleItems = consoleValue === undefined ? [] : Array.isArray(consoleValue) ? consoleValue : [consoleValue];
+  const allConsoleItems = consoleValue === undefined ? [] : Array.isArray(consoleValue) ? consoleValue : [consoleValue];
+  const normalizedConsoleSearch = consoleSearch.trim().toLowerCase();
+  const consoleItems = normalizedConsoleSearch ? allConsoleItems.filter(item => readable(item).toLowerCase().includes(normalizedConsoleSearch)) : allConsoleItems;
   const consoleColumns = Array.from(new Set(consoleItems.flatMap(item => item && typeof item === 'object' && !Array.isArray(item) ? Object.keys(item as Record<string, unknown>) : []))).slice(0, 10);
   const sessionDuration = session?.startedAt && session.stoppedAt ? Math.max(0, Date.parse(session.stoppedAt) - Date.parse(session.startedAt)) : null;
 
@@ -344,7 +349,7 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
                 {runnableFlow.name}
               </span>
             )}
-            <span className="runbar-count">{session ? `#${session.id}` : runLog.length}</span>
+            <span className="runbar-count">{runBusy || sessionBusy ? 'Running' : session ? `#${session.id}` : 'Ready'}</span>
             {consoleOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
           </button>
 
@@ -355,11 +360,11 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
                 <aside className="execution-console-steps">
                   <header>
                     <div><strong className={runStatusClass(session.status)}>{session.status === 'success' ? 'Success' : session.status}</strong>{sessionDuration !== null && <span>in {sessionDuration}ms</span>}</div>
-                    <button onClick={() => { setSession(null); setConsoleStepName(null); setConsoleView('output'); loggedExecutionIds.current.clear(); setRunLog([`ready · execute ${workflows[0]?.name || 'this workflow'} from this workspace`]); }}><Trash2 size={13} /> Clear</button>
+                    <button onClick={() => { setSession(null); setConsoleStepName(null); setConsoleView('output'); setConsoleDisplay('table'); setConsoleSearch(''); loggedExecutionIds.current.clear(); setRunLog([`ready · execute ${workflows[0]?.name || 'this workflow'} from this workspace`]); }}><Trash2 size={13} /> Clear execution</button>
                   </header>
                   <nav aria-label="Executed nodes">
                     {session.steps.map(step => (
-                      <button key={step.name} className={consoleStep?.name === step.name ? 'active' : ''} onClick={() => { setConsoleStepName(step.name); setConsoleView('output'); const node = consoleWorkflow?.nodes.find(item => item.name === step.name); if (consoleWorkflow && node) setSelected({ workflowId: consoleWorkflow.id, nodeId: node.id }); }}>
+                      <button key={step.name} className={consoleStep?.name === step.name ? 'active' : ''} onClick={() => { setConsoleStepName(step.name); setConsoleView('output'); setConsoleSearch(''); const node = consoleWorkflow?.nodes.find(item => item.name === step.name); if (consoleWorkflow && node) setSelected({ workflowId: consoleWorkflow.id, nodeId: node.id }); }}>
                         <span className={step.status}>{step.status === 'success' ? <Check size={13} /> : <AlertCircle size={13} />}</span>
                         <strong>{step.name}</strong>
                         <small>{step.durationMs !== null ? `${step.durationMs}ms` : step.status}</small>
@@ -370,22 +375,29 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
                 <section className="execution-console-output">
                   <header>
                     <div><strong>{consoleStep?.name || 'Execution output'}</strong><span className={consoleStep?.status}>{consoleStep?.status}{consoleStep?.durationMs !== null && consoleStep?.durationMs !== undefined ? ` in ${consoleStep.durationMs}ms` : ''}</span></div>
-                    <div className="execution-data-tabs"><button className={consoleView === 'input' ? 'active' : ''} onClick={() => setConsoleView('input')} aria-pressed={consoleView === 'input'}>Input</button><button className={consoleView === 'output' ? 'active' : ''} onClick={() => setConsoleView('output')} aria-pressed={consoleView === 'output'}>Output</button><span>{consoleItems.length} {consoleItems.length === 1 ? 'item' : 'items'}</span></div>
+                    <div className="execution-data-tabs"><button className={consoleView === 'input' ? 'active' : ''} onClick={() => { setConsoleView('input'); setConsoleSearch(''); }} aria-pressed={consoleView === 'input'}>Input</button><button className={consoleView === 'output' ? 'active' : ''} onClick={() => { setConsoleView('output'); setConsoleSearch(''); }} aria-pressed={consoleView === 'output'}>Output</button></div>
                   </header>
+                  <div className="execution-data-toolbar">
+                    <strong>{consoleView}</strong>
+                    <label className="execution-data-search"><Search size={13} /><input value={consoleSearch} onChange={event => setConsoleSearch(event.target.value)} placeholder={`Search ${consoleView}`} aria-label={`Search ${consoleView} data`} /></label>
+                    <div className="execution-display-modes" aria-label="Data display mode">
+                      <button className={consoleDisplay === 'table' ? 'active' : ''} onClick={() => setConsoleDisplay('table')} aria-pressed={consoleDisplay === 'table'} title="Table view"><Table2 size={14} /></button>
+                      <button className={consoleDisplay === 'json' ? 'active' : ''} onClick={() => setConsoleDisplay('json')} aria-pressed={consoleDisplay === 'json'} title="JSON view"><Braces size={14} /></button>
+                    </div>
+                    <span className="execution-item-count">{normalizedConsoleSearch && consoleItems.length !== allConsoleItems.length ? `${consoleItems.length} of ${allConsoleItems.length}` : consoleItems.length} {allConsoleItems.length === 1 ? 'item' : 'items'}</span>
+                  </div>
                   {consoleStep?.error ? <div className="execution-console-error"><AlertCircle size={15} /><div><strong>{consoleStep.error}</strong>{consoleStep.hint && <small>{consoleStep.hint}</small>}</div></div>
-                    : !consoleItems.length ? <div className="execution-console-empty">This step produced no output.</div>
-                      : consoleColumns.length ? (
+                    : !consoleItems.length ? <div className="execution-console-empty">{normalizedConsoleSearch ? `No ${consoleView} items match “${consoleSearch.trim()}”.` : consoleView === 'input' ? 'This node received no input data.' : 'This node produced no output data.'}</div>
+                      : consoleDisplay === 'table' && consoleColumns.length ? (
                         <div className="execution-output-table-wrap"><table><thead><tr><th>#</th>{consoleColumns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{consoleItems.map((item, index) => { const record = item as Record<string, unknown>; return <tr key={index}><td>{index + 1}</td>{consoleColumns.map(column => <td key={column}>{compactValue(record[column])}</td>)}</tr>; })}</tbody></table></div>
-                      ) : <pre className="execution-output-json">{readable(consoleValue)}</pre>}
+                      ) : <pre className="execution-output-json">{readable(consoleItems)}</pre>}
                 </section>
               </div>
             ) : (
-              <div className="run-terminal" aria-label="Workflow run activity">
-                {sessionBusy && <div className="run-line run-line-info"><Loader2 size={12} className="spin-icon" /><code>Reading the latest execution from n8n…</code></div>}
-                {runLog.map((line, i) => {
-                  const kind = line.includes(' · error ') || line.includes('Cannot read') ? 'err' : line.includes(' · success') ? 'ok' : line.includes(' · timeout ') ? 'warn' : line.includes('run started') || line.includes('starting run') ? 'info' : 'dim';
-                  return <div key={`${line}-${i}`} className={`run-line run-line-${kind}`}><span className="run-line-dot" /><code>{line}</code></div>;
-                })}
+              <div className={`execution-console-placeholder ${sessionError ? 'has-error' : ''}`} aria-label="Workflow execution status">
+                {runBusy || sessionBusy ? <Loader2 size={22} className="spin-icon" /> : sessionError ? <AlertCircle size={22} /> : <TerminalSquare size={22} />}
+                <strong>{runBusy ? 'Executing workflow…' : sessionBusy ? 'Loading execution…' : sessionError ? 'Execution details unavailable' : 'No execution selected'}</strong>
+                <span>{runBusy || sessionBusy ? 'Node results will appear here as n8n completes each step.' : sessionError || 'Run this workflow to inspect every node’s input and output.'}</span>
               </div>
             )
           )}
