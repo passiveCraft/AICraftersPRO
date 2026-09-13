@@ -102,7 +102,6 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
     w.name.toLowerCase().includes(search.toLowerCase()) &&
     (filter === 'all' || (filter === 'active' ? w.active : !w.active))
   );
-  const running = executions.filter(r => isStillRunning(r.status));
 
   // ── execution loading ──────────────────────────────────────────────────────
   async function loadExecution(executionId: string) {
@@ -393,11 +392,6 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
         </div>
 
         <div className="workspace-bottom">
-          <span>
-            <i />
-            {connected ? (running.length ? `${running.length} running` : 'Ready to execute workflow') : 'n8n is offline'}
-            <small>{layoutMode === 'islands' ? 'Drag an island to arrange · drag empty space to move' : 'Drag to move'} · wheel, trackpad or pinch to zoom</small>
-          </span>
           <div className="office-zoom-controls">
             <button title="Zoom in" aria-label="Zoom in workspace" onClick={() => setZoom(v => Math.min(3.2, Number((v + .2).toFixed(2))))}>
               <Plus size={20} />
