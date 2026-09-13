@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Activity, ArrowLeft, ArrowUpRight, Box, Check, ChevronDown, ChevronRight, ChevronUp, Clock3, Code2, Eye, EyeOff, GitBranch, Globe2, Layers3, LayoutGrid, Maximize2, Minus, Network, PanelRightClose, PanelRightOpen, Plus, Search, TerminalSquare, Webhook } from 'lucide-react';
+import { Activity, ArrowLeft, ArrowUpRight, Box, Check, ChevronDown, ChevronRight, ChevronUp, Clock3, Code2, Eye, EyeOff, GitBranch, Globe2, Layers3, LayoutGrid, Maximize2, Minus, Network, PanelRightClose, PanelRightOpen, Plus, Search, Sparkles, TerminalSquare, Webhook } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { ThreeOfficeScene } from '@/components/three-office-scene';
 import type { Execution, Workflow, WorkflowNode } from '@/lib/n8n-types';
@@ -9,7 +9,7 @@ import type { Execution, Workflow, WorkflowNode } from '@/lib/n8n-types';
 type Props = {
   workflows: Workflow[]; executions: Execution[]; connected: boolean; light: boolean;
   onWorkflow: (workflow: Workflow) => void; onWorkflows: () => void;
-  onCreate: () => void; onActivity: () => void; onConnect: () => void; onChanged: () => Promise<void> | void;
+  onCreate: () => void; onActivity: () => void; onCreations: () => void; onConnect: () => void; onChanged: () => Promise<void> | void;
 };
 
 function nodeIcon(type: string) {
@@ -32,7 +32,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function OfficeOverview({ workflows, executions, connected, light, onWorkflow, onWorkflows, onCreate, onActivity, onConnect, onChanged }: Props) {
+export function OfficeOverview({ workflows, executions, connected, light, onWorkflow, onWorkflows, onCreate, onActivity, onCreations, onConnect, onChanged }: Props) {
   const [sidebar, setSidebar] = useState(true);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -84,7 +84,7 @@ export function OfficeOverview({ workflows, executions, connected, light, onWork
   return <div className={`office-layout ${sidebar ? '' : 'sidebar-hidden'}`}>
     <section className={`office-map ${consoleOpen ? 'console-open' : ''}`} aria-label="Workflow workspace">
       <div className="workspace-toolbar controls-only">
-        <div className="workspace-toolbar-actions"><button onClick={onCreate}><Plus size={17} /> New workflow</button><button className={`label-toggle ${labelsVisible ? 'is-active' : ''}`} onClick={() => setLabelsVisible(value => !value)} aria-label={labelsVisible ? 'Hide workspace labels' : 'Show workspace labels'} title={labelsVisible ? 'Hide labels' : 'Show labels'}>{labelsVisible ? <EyeOff size={18} /> : <Eye size={18} />}</button><button className={`layout-toggle ${layoutMode === 'islands' ? 'is-active' : ''}`} onClick={toggleLayout} aria-pressed={layoutMode === 'islands'} aria-label={layoutMode === 'floor' ? 'Switch to node islands' : 'Switch to team floor'} title={layoutMode === 'floor' ? 'Node islands view' : 'Team floor view'}>{layoutMode === 'floor' ? <Layers3 size={18} /> : <LayoutGrid size={18} />}</button><button className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebar ? 'Hide sidebar' : 'Show sidebar'}>{sidebar ? <PanelRightClose size={19} /> : <PanelRightOpen size={19} />}</button></div>
+        <div className="workspace-toolbar-actions"><button onClick={onCreate}><Plus size={17} /> New workflow</button><button className="gemini-toolbar" onClick={onCreations}><Sparkles size={16} /> Gemini studio</button><button className={`label-toggle ${labelsVisible ? 'is-active' : ''}`} onClick={() => setLabelsVisible(value => !value)} aria-label={labelsVisible ? 'Hide workspace labels' : 'Show workspace labels'} title={labelsVisible ? 'Hide labels' : 'Show labels'}>{labelsVisible ? <EyeOff size={18} /> : <Eye size={18} />}</button><button className={`layout-toggle ${layoutMode === 'islands' ? 'is-active' : ''}`} onClick={toggleLayout} aria-pressed={layoutMode === 'islands'} aria-label={layoutMode === 'floor' ? 'Switch to node islands' : 'Switch to team floor'} title={layoutMode === 'floor' ? 'Node islands view' : 'Team floor view'}>{layoutMode === 'floor' ? <Layers3 size={18} /> : <LayoutGrid size={18} />}</button><button className="sidebar-toggle" onClick={toggleSidebar} aria-label={sidebar ? 'Hide sidebar' : 'Show sidebar'}>{sidebar ? <PanelRightClose size={19} /> : <PanelRightOpen size={19} />}</button></div>
       </div>
       <div className="workspace-stage">
         {workflows.length ? <ThreeOfficeScene workflows={workflows} executions={executions} light={light} zoom={zoom} resetViewKey={resetViewKey} labelsVisible={labelsVisible} layoutMode={layoutMode} runningWorkflowId={runningWorkflowId} selectedWorkflowId={activeFlow?.id} selectedNodeId={activeNode?.id} onZoomChange={value => setZoom(Number(value.toFixed(3)))} onInspect={inspect} /> : <div className="empty-office"><span><Network size={36} strokeWidth={1.3} /></span><h2>{connected ? 'Your office is ready' : 'Your workflows belong here'}</h2><p>{connected ? 'Create your first workflow or import an existing n8n workflow in the editor.' : 'Start n8n and connect it to bring every workflow into this workspace.'}</p><button onClick={connected ? onCreate : onConnect}>{connected ? <Plus size={17} /> : <Network size={17} />}{connected ? 'Create workflow' : 'Connect n8n'}</button></div>}

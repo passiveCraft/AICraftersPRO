@@ -1,12 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronRight, Eye, EyeOff, Link2, LoaderCircle, RefreshCw, Search, Unplug } from 'lucide-react';
+import { Activity, ArrowUpRight, Bot, Check, ChevronRight, CircleAlert, Clock3, Eye, EyeOff, Link2, LoaderCircle, RefreshCw, Search, Sparkles, Unplug, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { Execution, Page, Snapshot, Workflow } from '@/lib/n8n-types';
+import type { Execution, ExecutionDetail, Page, Snapshot, Workflow } from '@/lib/n8n-types';
 
-const empty: Snapshot = { connected: false, workflows: { data: [], nextCursor: null }, executions: { data: [], nextCursor: null } };
+const empty: Snapshot = { connected: false, workflows: { data: [], nextCursor: null }, executions: { data: [], nextCursor: null }, credentials: [] };
 async function request<T>(path = '', init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('Content-Type', 'application/json');
@@ -119,7 +119,7 @@ export function WorkflowPanel({ state, onConnect, onOpen, onCreate }: { state: N
       <p className="integration-note">Open a workflow to edit it full screen. Saves go directly to your connected n8n account.</p>
   </div>;
 }
-export function ActivityPanel({ state, onConnect }: { state: N8nState; onConnect: () => void }) {
+export function LegacyActivityPanel({ state, onConnect }: { state: N8nState; onConnect: () => void }) {
   if (!state.data.connected) return <EmptyPanel onConnect={onConnect} title="Nothing running yet." />;
   const { executions, executionError, workflows } = state.data;
   return <div className="integration-content"><div className="resource-toolbar"><span>Recent executions</span><button aria-label="Refresh executions" disabled={!!state.busy} onClick={() => void state.refresh()}><RefreshCw size={16} className={state.busy === 'sync' ? 'spin-icon' : ''} /></button></div>
@@ -130,4 +130,58 @@ export function ActivityPanel({ state, onConnect }: { state: N8nState; onConnect
     <p className="integration-note">Open an execution to inspect its full output in n8n.</p>
   </div>;
 }
+export function ActivityPanel({ state, onConnect }: { state: N8nState; onConnect: () => void }) {
+  const [detail, setDetail] = useState<ExecutionDetail | null>(null);
+  const [loadingId, setLoadingId] = useState('');
+  if (!state.data.connected) return <EmptyPanel onConnect={onConnect} title="Nothing running yet." />;
+  const { executions, executionError, workflows } = state.data;
+  async function inspect(item: Execution) { setLoadingId(item.id); try { setDetail(await request<ExecutionDetail>(`?resource=execution&executionId=${encodeURIComponent(item.id)}`)); } catch { setDetail({ ...item, lastNode: null, steps: [], error: 'Execution details are unavailable for this run.' }); } finally { setLoadingId(''); } }
+  return <div className="integration-content"><div className="resource-toolbar"><span>Recent executions</span><button aria-label="Refresh executions" disabled={!!state.busy} onClick={() => void state.refresh()}><RefreshCw size={16} className={state.busy === 'sync' ? 'spin-icon' : ''} /></button></div>
+    {(state.error || executionError) && <p className="integration-error" role="alert">{state.error || executionError}</p>}
+    {!executions.data.length && !executionError && <p className="integration-note">No executions are available yet. n8n’s history retention settings determine which runs appear.</p>}
+    <div className="execution-list">{executions.data.map(item => <button key={item.id} onClick={() => void inspect(item)}><div><strong>{workflows.data.find(w => w.id === item.workflowId)?.name || `Workflow ${item.workflowId}`}</strong><span className={`state-chip ${item.status === 'success' ? 'success' : ['error', 'crashed'].includes(item.status) ? 'failed' : ''}`}>{item.status}</span></div><small>#{item.id} · {item.mode || 'Execution'} · {date(item.startedAt)}</small><span className="execution-bottom">{loadingId === item.id ? 'Reading run…' : item.startedAt && item.stoppedAt ? `${Math.max(0, (Date.parse(item.stoppedAt) - Date.parse(item.startedAt)) / 1000).toFixed(1)}s` : 'Inspect run'}<ChevronRight size={14} /></span></button>)}</div>
+    {detail && <ExecutionInspector detail={detail} instanceUrl={state.data.instanceUrl} onClose={() => setDetail(null)} />}
+    {executions.nextCursor && <Button variant="outline" disabled={!!state.busy} onClick={() => void state.loadMore('executions')}>{state.busy === 'executions' ? 'Loading…' : 'Load older executions'}</Button>}
+    <p className="integration-note">Select a run to see the failed node, n8n’s message, and its output here.</p>
+  </div>;
+}
+
+function answerOf(value: unknown): string {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(answerOf).filter(Boolean).join('\n');
+  if (!value || typeof value !== 'object') return typeof value === 'bigint' ? value.toString() : '';
+  const data = value as Record<string, unknown>;
+  if (typeof data.answer === 'string') return data.answer;
+  if (typeof data.text === 'string') return data.text;
+  const parts = data.content && typeof data.content === 'object' ? (data.content as Record<string, unknown>).parts : undefined;
+  if (Array.isArray(parts)) { const text = parts.map(answerOf).filter(Boolean).join('\n'); if (text) return text; }
+  return JSON.stringify(value, null, 2);
+}
+
+function ExecutionInspector({ detail, instanceUrl, onClose }: { detail: ExecutionDetail; instanceUrl?: string; onClose: () => void }) {
+  return <section className={`run-inspector ${detail.error ? 'has-failure' : ''}`} aria-label={`Execution ${detail.id} details`}><header><div><span>EXECUTION #{detail.id}</span><strong>{detail.error ? 'Run diagnosis' : 'Run output'}</strong></div><button onClick={onClose} aria-label="Close run details"><X size={16} /></button></header>{detail.error && <div className="run-diagnosis"><CircleAlert size={18} /><div><strong>{detail.lastNode || 'Workflow error'}</strong><p>{detail.error}</p>{detail.hint && <small>{detail.hint}</small>}</div></div>}<div className="run-step-list">{detail.steps.map(step => <div key={step.name} className={step.status}><span>{step.status === 'error' ? <CircleAlert size={14} /> : <Check size={14} />}</span><div><strong>{step.name}</strong><small>{step.status}{step.durationMs !== null ? ` · ${step.durationMs}ms` : ''}</small></div></div>)}</div>{detail.output !== undefined && <div className="creation-output"><span>OUTPUT</span><p>{answerOf(detail.output)}</p></div>}{instanceUrl && <a className="run-native-link" href={`${instanceUrl}/workflow/${encodeURIComponent(detail.workflowId)}/executions/${encodeURIComponent(detail.id)}`} target="_blank" rel="noreferrer">Open raw execution in n8n <ArrowUpRight size={14} /></a>}</section>;
+}
+
+export function GeminiPanel({ state, onConnect }: { state: N8nState; onConnect: () => void }) {
+  const [workflow, setWorkflow] = useState<Workflow | undefined>(() => state.data.workflows.data.find(item => item.nodes.some(node => /googleGemini/i.test(node.type))));
+  const [prompt, setPrompt] = useState('Create a concise launch idea for an AI workflow dashboard that feels calm, precise, and useful.');
+  const [busy, setBusy] = useState('');
+  const [error, setError] = useState('');
+  const [output, setOutput] = useState('');
+  const [history, setHistory] = useState<ExecutionDetail[]>([]);
+  const credential = state.data.credentials.find(item => item.type === 'googlePalmApi');
+  useEffect(() => { const found = state.data.workflows.data.find(item => item.nodes.some(node => /googleGemini/i.test(node.type))); if (found) setWorkflow(found); }, [state.data.workflows.data]);
+  useEffect(() => {
+    if (!workflow?.id) return;
+    const recent = state.data.executions.data.filter(item => item.workflowId === workflow.id).slice(0, 6);
+    let canceled = false;
+    void Promise.all(recent.map(item => request<ExecutionDetail>(`?resource=execution&executionId=${encodeURIComponent(item.id)}`).catch(() => null))).then(items => { if (!canceled) setHistory(items.filter((item): item is ExecutionDetail => !!item)); });
+    return () => { canceled = true; };
+  }, [workflow?.id, state.data.executions.data]);
+  if (!state.data.connected) return <EmptyPanel onConnect={onConnect} title="Connect n8n to create with Gemini." />;
+  async function createWorkflow() { setBusy('create'); setError(''); try { const created = await request<Workflow>('?operation=createGemini', { method: 'POST', body: '{}' }); setWorkflow(created); await state.refresh(); } catch (issue) { setError(issue instanceof Error ? issue.message : 'Could not create the Gemini workflow.'); } finally { setBusy(''); } }
+  async function generate() { if (!workflow) return; setBusy('run'); setError(''); setOutput(''); try { const result = await request<{ output: unknown }>(`?operation=trigger&workflowId=${encodeURIComponent(workflow.id)}`, { method: 'POST', body: JSON.stringify({ prompt }) }); setOutput(answerOf(result.output)); await state.refresh(); } catch (issue) { setError(issue instanceof Error ? issue.message : 'Gemini could not complete this creation.'); } finally { setBusy(''); } }
+  return <div className="integration-content gemini-panel"><div className="gemini-readiness"><div className="gemini-emblem"><Sparkles size={22} /></div><div><span>GOOGLE GEMINI</span><h2>{credential ? 'Credential ready' : 'Credential required'}</h2><p>{credential ? credential.name : 'Connect a Google Gemini (PaLM) API credential in n8n.'}</p></div></div><div className="preflight-list"><div className="ready"><Check size={15} /><span>n8n API connection</span><strong>Ready</strong></div><div className={credential ? 'ready' : 'blocked'}>{credential ? <Check size={15} /> : <CircleAlert size={15} />}<span>Gemini credential</span><strong>{credential ? 'Connected' : 'Missing'}</strong></div><div className={workflow?.active ? 'ready' : 'blocked'}>{workflow?.active ? <Check size={15} /> : <Clock3 size={15} />}<span>Runnable workflow</span><strong>{workflow?.active ? 'Active' : workflow ? 'Inactive' : 'Not created'}</strong></div></div>{error && <p className="integration-error" role="alert">{error}</p>}{!workflow ? <div className="gemini-create-card"><Bot size={28} /><h3>Create a clean Gemini workflow</h3><p>A separate webhook → Gemini → response flow will be added to your account. The existing workflow stays untouched.</p><Button onClick={() => void createWorkflow()} disabled={!credential || !!busy}>{busy === 'create' ? <LoaderCircle className="spin-icon" size={16} /> : <Sparkles size={16} />}{busy === 'create' ? 'Creating and activating…' : 'Create Gemini workflow'}</Button></div> : <div className="gemini-composer"><label htmlFor="gemini-prompt">Creative prompt</label><textarea id="gemini-prompt" value={prompt} onChange={event => setPrompt(event.target.value)} rows={5} /><div><small>{prompt.length} characters</small><Button onClick={() => void generate()} disabled={!!busy || !workflow.active || !prompt.trim()}>{busy === 'run' ? <LoaderCircle className="spin-icon" size={16} /> : <Sparkles size={16} />}{busy === 'run' ? 'Gemini is creating…' : 'Create with Gemini'}</Button></div></div>}{output && <div className="creation-result is-new"><span><Sparkles size={14} /> NEW CREATION</span><p>{output}</p></div>}<section className="creation-history"><header><div><span>CREATIONS</span><h3>What this workflow made</h3></div><Activity size={18} /></header>{!history.length ? <p className="integration-note">Run the Gemini workflow and its creations will appear here.</p> : history.map(item => <div className={`creation-result ${item.error ? 'failed' : ''}`} key={item.id}><span>{item.error ? <CircleAlert size={14} /> : <Sparkles size={14} />} RUN #{item.id} · {date(item.startedAt)}</span><p>{item.error || answerOf(item.output) || 'No text output was saved for this run.'}</p></div>)}</section></div>;
+}
+
 function EmptyPanel({ title, onConnect }: { title: string; onConnect: () => void }) { return <div className="panel-empty"><div className="empty-glyph"><Link2 size={27} strokeWidth={1} /></div><h2>{title}</h2><p>Connect your n8n account to bring its workflows and activity into view.</p><Button variant="outline" onClick={onConnect}>Connect n8n <ArrowUpRight size={15} /></Button></div>; }

@@ -1,4 +1,4 @@
-import type { Execution, Page, Workflow } from './n8n-types';
+import type { Credential, Execution, ExecutionDetail, Page, Workflow } from './n8n-types';
 
 export class ConnectionError extends Error {
   status: number;
@@ -69,7 +69,7 @@ function toBase64(value: Uint8Array) { return btoa(String.fromCharCode(...value)
 function fromBase64(value: string) { return Uint8Array.from(atob(value), c => c.charCodeAt(0)); }
 
 export async function n8nRequest(instance: string, key: string, resource: string, options: { method?: 'GET' | 'POST' | 'PUT' | 'DELETE'; query?: Record<string, string>; body?: unknown } = {}, fetcher: typeof fetch = fetch): Promise<unknown> {
-  if (!/^(workflows|executions)(\/[a-zA-Z0-9_-]+)?(\/(activate|deactivate))?$/.test(resource)) throw new ConnectionError('Unsupported n8n resource.');
+  if (!/^(workflows|executions|credentials)(\/[a-zA-Z0-9_-]+)?(\/(activate|deactivate))?$/.test(resource)) throw new ConnectionError('Unsupported n8n resource.');
   const url = new URL(`${instance}/api/v1/${resource}`);
   for (const [name, value] of Object.entries(options.query || {})) url.searchParams.set(name, value);
   let response: Response;
@@ -102,7 +102,7 @@ function str(value: unknown): string { return typeof value === 'string' ? value 
 export function workflow(value: unknown): Workflow {
   const data = record(value);
   if (!str(data.id) || typeof data.name !== 'string') throw new ConnectionError('The API response does not contain valid n8n workflows.', 502);
-  const nodes = list(data.nodes).map((v, index) => { const n = record(v); const pos = list(n.position); return { id: str(n.id) || String(index), name: str(n.name), type: str(n.type), typeVersion: Number(n.typeVersion) || 1, disabled: n.disabled === true, position: [Number(pos[0]) || 0, Number(pos[1]) || 0] as [number, number], parameters: record(n.parameters) }; });
+  const nodes = list(data.nodes).map((v, index) => { const n = record(v); const pos = list(n.position); const credentialTypes = Object.keys(record(n.credentials)); return { id: str(n.id) || String(index), name: str(n.name), type: str(n.type), typeVersion: Number(n.typeVersion) || 1, disabled: n.disabled === true, position: [Number(pos[0]) || 0, Number(pos[1]) || 0] as [number, number], parameters: record(n.parameters), credentialTypes: credentialTypes.length ? credentialTypes : undefined }; });
   const edges: Workflow['edges'] = [];
   for (const [from, types] of Object.entries(record(data.connections))) {
     for (const [type, outputs] of Object.entries(record(types))) {
@@ -110,6 +110,28 @@ export function workflow(value: unknown): Workflow {
     }
   }
   return { id: str(data.id), name: str(data.name), active: data.active === true, archived: data.isArchived === true, updatedAt: str(data.updatedAt) || null, tags: list(data.tags).map(t => str(record(t).name)).filter(Boolean), nodes, edges, settings: record(data.settings) };
+}
+export function credential(value: unknown): Credential {
+  const data = record(value);
+  if (!str(data.id) || !str(data.type)) throw new ConnectionError('The API response does not contain valid credential metadata.', 502);
+  return { id: str(data.id), name: str(data.name) || str(data.type), type: str(data.type) };
+}
+function limited(value: unknown, depth = 0): unknown {
+  if (depth > 5) return '[nested data]';
+  if (value === null || typeof value === 'boolean' || typeof value === 'number') return value;
+  if (typeof value === 'string') return value.length > 4000 ? `${value.slice(0, 4000)}…` : value;
+  if (Array.isArray(value)) return value.slice(0, 10).map(item => limited(item, depth + 1));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value as RecordData).filter(([key]) => !/binary|stack|headers|token|authorization|cookie/i.test(key)).slice(0, 40).map(([key, item]) => [key, limited(item, depth + 1)]));
+  return typeof value === 'bigint' ? value.toString() : '';
+}
+export function executionDetail(value: unknown): ExecutionDetail {
+  const data = record(value), result = record(record(data.data).resultData), runData = record(result.runData);
+  const steps = Object.entries(runData).map(([name, attempts]) => {
+    const attempt = record(list(attempts).at(-1)); const issue = record(attempt.error); const main = list(record(attempt.data).main); const items = list(main[0]).map(item => limited(record(item).json));
+    return { name, status: str(issue.message) ? 'error' as const : 'success' as const, durationMs: Number.isFinite(Number(attempt.executionTime)) ? Number(attempt.executionTime) : null, error: str(issue.message) || undefined, hint: str(issue.description) || undefined, output: items.length ? items : undefined };
+  });
+  const base = execution(data), topError = record(result.error), finalStep = [...steps].reverse().find(step => step.output);
+  return { ...base, lastNode: str(result.lastNodeExecuted) || null, error: str(topError.message) || steps.find(step => step.error)?.error, hint: str(topError.description) || steps.find(step => step.hint)?.hint, steps, output: finalStep?.output };
 }
 export function execution(value: unknown): Execution {
   const data = record(value);

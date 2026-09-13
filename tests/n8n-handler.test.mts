@@ -20,6 +20,7 @@ function fixture() {
     if (url.hostname === 'cloudflare-dns.com') return Response.json({ Answer: [{ type: 1, data: '1.1.1.1' }] });
     const key = new Headers(init?.headers).get('X-N8N-API-KEY');
     if (key === 'invalid-test-key') return Response.json({ private: 'do-not-return' }, { status: 401 });
+    if (url.pathname.endsWith('/credentials')) return Response.json({ data: [{ id: 'cred-1', name: 'Gemini account', type: 'googlePalmApi', data: { apiKey: 'private' } }], nextCursor: null });
     if (url.pathname.endsWith('/executions')) return key === 'workflow-only-key' ? Response.json({}, { status: 403 }) : Response.json({ data: [{ id: 'e1', workflowId: 'w1', status: 'success' }], nextCursor: 'more-executions' });
     if (url.pathname.endsWith('/workflows/w1')) return Response.json({ id: 'w1', name: 'Connected workflow', active: true, nodes: [{ id: 'hook', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'demo-hook' } }], credentials: 'private' });
     if (url.pathname.endsWith('/webhook/demo-hook')) return Response.json({ accepted: true });
@@ -56,8 +57,8 @@ test('pagination and workflow inspection use the saved connection and exclude cr
   assert.equal((await result.json() as { data: { id: string }[] }).data[0].id, 'w2');
   const detail = await handleN8nRequest(f.request('a', 'GET', undefined, '?workflowId=w1'), f.bindings, f.fetcher);
   assert.ok(!(await detail.text()).includes('credentials'));
-  const unsupported = await handleN8nRequest(f.request('a', 'GET', undefined, '?resource=credentials'), f.bindings, f.fetcher);
-  assert.equal(unsupported.status, 400);
+  const credentials = await handleN8nRequest(f.request('a', 'GET', undefined, '?resource=credentials'), f.bindings, f.fetcher);
+  const credentialText = await credentials.text(); assert.equal(credentials.status, 200); assert.ok(!credentialText.includes('apiKey')); assert.ok(credentialText.includes('googlePalmApi'));
 });
 test('disconnect deletes only the current member’s saved connection', async () => {
   const f = fixture(); await f.connect('a'); await f.connect('b');
