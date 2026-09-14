@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import type { Execution, ExecutionDetail, Page, Snapshot, Workflow } from '@/lib/n8n-types';
 
 const empty: Snapshot = { connected: false, workflows: { data: [], nextCursor: null }, executions: { data: [], nextCursor: null }, credentials: [] };
-async function request<T>(path = '', init?: RequestInit): Promise<T> {
+export async function n8nClientRequest<T>(path = '', init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('Content-Type', 'application/json');
   const response = await fetch(`/api/n8n${path}`, { ...init, credentials: 'same-origin', cache: 'no-store', headers });
@@ -28,14 +28,14 @@ export function useN8n() {
     const current = ++generation.current;
     setBusy('sync');
     try {
-      const next = await request<Snapshot>();
+      const next = await n8nClientRequest<Snapshot>();
       if (generation.current === current) { setData(next); setError(''); }
     } catch (issue) { if (generation.current === current) setError(issue instanceof Error ? issue.message : 'Connection failed.'); }
     finally { inFlight.current = false; if (generation.current === current) setBusy(''); }
   }, []);
   useEffect(() => {
     let canceled = false;
-    void request<Snapshot>().then(next => { if (!canceled) { setData(next); setError(''); } }).catch(issue => { if (!canceled) setError(issue instanceof Error ? issue.message : 'Connection failed.'); }).finally(() => { if (!canceled) { inFlight.current = false; setBusy(''); } });
+    void n8nClientRequest<Snapshot>().then(next => { if (!canceled) { setData(next); setError(''); } }).catch(issue => { if (!canceled) setError(issue instanceof Error ? issue.message : 'Connection failed.'); }).finally(() => { if (!canceled) { inFlight.current = false; setBusy(''); } });
     return () => { canceled = true; };
   }, []);
   async function connect(instanceUrl: string, apiKey: string) {
@@ -43,7 +43,7 @@ export function useN8n() {
     inFlight.current = true;
     const current = ++generation.current; setBusy('connect'); setError('');
     try {
-      const next = await request<Snapshot>('', { method: 'POST', body: JSON.stringify({ instanceUrl, apiKey }) });
+      const next = await n8nClientRequest<Snapshot>('', { method: 'POST', body: JSON.stringify({ instanceUrl, apiKey }) });
       if (current === generation.current) setData(next);
       return true;
     } catch (issue) { if (current === generation.current) setError(issue instanceof Error ? issue.message : 'Connection failed.'); return false; }
@@ -53,7 +53,7 @@ export function useN8n() {
     if (inFlight.current) return;
     inFlight.current = true;
     const current = ++generation.current; setBusy('disconnect'); setError('');
-    try { await request('', { method: 'DELETE' }); if (current === generation.current) setData(empty); }
+    try { await n8nClientRequest('', { method: 'DELETE' }); if (current === generation.current) setData(empty); }
     catch (issue) { if (current === generation.current) setError(issue instanceof Error ? issue.message : 'Disconnect failed.'); }
     finally { inFlight.current = false; if (current === generation.current) setBusy(''); }
   }
@@ -64,10 +64,10 @@ export function useN8n() {
     const current = ++generation.current; setBusy(resource); setError('');
     try {
       if (resource === 'workflows') {
-        const next = await request<Page<Workflow>>(`?resource=workflows&cursor=${encodeURIComponent(cursor)}`);
+        const next = await n8nClientRequest<Page<Workflow>>(`?resource=workflows&cursor=${encodeURIComponent(cursor)}`);
         if (current === generation.current) setData(old => ({ ...old, workflows: { data: [...old.workflows.data, ...next.data.filter(w => !old.workflows.data.some(v => v.id === w.id))], nextCursor: next.nextCursor } }));
       } else {
-        const next = await request<Page<Execution>>(`?resource=executions&cursor=${encodeURIComponent(cursor)}`);
+        const next = await n8nClientRequest<Page<Execution>>(`?resource=executions&cursor=${encodeURIComponent(cursor)}`);
         if (current === generation.current) setData(old => ({ ...old, executions: { data: [...old.executions.data, ...next.data.filter(e => !old.executions.data.some(v => v.id === e.id))], nextCursor: next.nextCursor } }));
       }
     } catch (issue) { if (current === generation.current) setError(issue instanceof Error ? issue.message : 'Could not load the next page.'); }
@@ -135,7 +135,7 @@ export function ActivityPanel({ state, onConnect }: { state: N8nState; onConnect
   const [loadingId, setLoadingId] = useState('');
   if (!state.data.connected) return <EmptyPanel onConnect={onConnect} title="Nothing running yet." />;
   const { executions, executionError, workflows } = state.data;
-  async function inspect(item: Execution) { setLoadingId(item.id); try { setDetail(await request<ExecutionDetail>(`?resource=execution&executionId=${encodeURIComponent(item.id)}`)); } catch { setDetail({ ...item, lastNode: null, steps: [], error: 'Execution details are unavailable for this run.' }); } finally { setLoadingId(''); } }
+  async function inspect(item: Execution) { setLoadingId(item.id); try { setDetail(await n8nClientRequest<ExecutionDetail>(`?resource=execution&executionId=${encodeURIComponent(item.id)}`)); } catch { setDetail({ ...item, lastNode: null, steps: [], error: 'Execution details are unavailable for this run.' }); } finally { setLoadingId(''); } }
   return <div className="integration-content"><div className="resource-toolbar"><span>Recent executions</span><button aria-label="Refresh executions" disabled={!!state.busy} onClick={() => void state.refresh()}><RefreshCw size={16} className={state.busy === 'sync' ? 'spin-icon' : ''} /></button></div>
     {(state.error || executionError) && <p className="integration-error" role="alert">{state.error || executionError}</p>}
     {!executions.data.length && !executionError && <p className="integration-note">No executions are available yet. n8n’s history retention settings determine which runs appear.</p>}

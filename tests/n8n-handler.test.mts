@@ -29,7 +29,8 @@ function fixture() {
     if (url.pathname.endsWith('/workflows/w3/activate')) { manualWorkflow = { ...manualWorkflow, active: true }; return Response.json(manualWorkflow); }
     if (url.pathname.endsWith('/workflows/w3') && init?.method === 'PUT') { manualWorkflow = { ...JSON.parse(String(init.body)), id: 'w3', active: false }; return Response.json(manualWorkflow); }
     if (url.pathname.endsWith('/workflows/w3')) return Response.json(manualWorkflow);
-    if (url.pathname.endsWith('/workflows/w1')) return Response.json({ id: 'w1', name: 'Connected workflow', active: true, nodes: [{ id: 'hook', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'demo-hook' } }], credentials: 'private' });
+    if (url.pathname.endsWith('/workflows/w1')) return Response.json({ id: 'w1', name: 'Product & Market Intelligence', active: true, nodes: [{ id: 'hook', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'demo-hook' } }, { id: 'approval', name: 'AI Crafters Pro Approval', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'approval-hook' } }], credentials: 'private' });
+    if (url.pathname.endsWith('/webhook/approval-hook')) return Response.json(JSON.parse(String(init?.body)));
     if (url.pathname.endsWith('/webhook/demo-hook') || url.pathname.endsWith('/webhook/inactive-hook') || url.pathname.includes('/webhook/operator-core-')) return Response.json({ accepted: true });
     return Response.json({ data: [{ id: url.searchParams.has('cursor') ? 'w2' : 'w1', name: 'Connected workflow', active: true, nodes: [] }], nextCursor: url.searchParams.has('cursor') ? null : 'opaque+/=' });
   };
@@ -108,6 +109,16 @@ test('manual workflows get an idempotent dashboard runner and execute without ed
   const second = await handleN8nRequest(f.request('a', 'POST', { source: 'dashboard' }, '?operation=trigger&workflowId=w3'), f.bindings, f.fetcher);
   assert.equal(second.status, 200);
   assert.equal(f.seenRequests.filter(item => item === 'PUT /api/v1/workflows/w3').length, putCount);
+});
+test('approval uses only the named POST webhook and forwards bounded operator context', async () => {
+  const f = fixture(); await f.connect('member-a');
+  const response = await handleN8nRequest(f.request('member-a', 'POST', { action: 'approve', executionId: 'e1' }, '?operation=approval&workflowId=w1'), f.bindings, f.fetcher);
+  assert.equal(response.status, 200);
+  const body = await response.json() as { status: string; action: string; output: Record<string, string> };
+  assert.equal(body.status, 'accepted'); assert.equal(body.action, 'approve');
+  assert.deepEqual(body.output, { action: 'approve', executionId: 'e1', systemName: 'Product & Market Intelligence', source: 'ai-crafters-pro-dashboard', requestedBy: 'member-a' });
+  assert.ok(f.seen.some(url => url.endsWith('/webhook/approval-hook')));
+  assert.ok(!JSON.stringify(body).includes('test-api-key'));
 });
 test('unauthenticated and cross-site mutations fail before any upstream request', async () => {
   const f = fixture();

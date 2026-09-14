@@ -2,18 +2,10 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Operator Core — Your AI Workspace',
-  description: 'A spatial interface for your n8n workspace.',
+  title: 'AI Crafters Pro — Operations Command',
+  description: 'Monitor and operate autonomous commerce Systems through live n8n workflows.',
 };
 
-export default function RootLayout({
-  children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
-  return (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
-  );
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  return <html lang="en"><body>{children}</body></html>;
 }

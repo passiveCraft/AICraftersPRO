@@ -23,3 +23,5 @@ export type Snapshot = {
   connected: boolean; instanceUrl?: string; connectedAt?: string; syncedAt?: string;
   workflows: Page<Workflow>; executions: Page<Execution>; credentials: Credential[]; executionError?: string; credentialError?: string;
 };
+export type ApprovalAction = 'approve' | 'reject';
+export type ApprovalResult = { status: 'accepted'; action: ApprovalAction; output: unknown };
