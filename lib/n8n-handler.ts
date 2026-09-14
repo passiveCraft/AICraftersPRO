@@ -1,6 +1,7 @@
 import { ConnectionError, checkPublicHost, credential, decryptKey, encryptKey, execution, executionDetail, n8nGet, n8nRequest, normalizeInstance, page, workflow } from './n8n-core.ts';
 import type { WorkflowDraft } from './n8n-types.ts';
 import { AI_CRAFTERS_SYSTEMS } from './ai-crafters.ts';
+import { buildSystemWorkflow } from './system-workflows.ts';
 
 export type Bindings = { DB: D1Database; N8N_ENCRYPTION_KEY: string; N8N_DEV_INSTANCE_URL?: string; N8N_DEV_API_KEY?: string };
 type Saved = { instance_url: string; encrypted_key: string; connected_at: string };
@@ -61,9 +62,27 @@ export async function handleN8nRequest(request: Request, bindings: Bindings, fet
       if (instance !== 'http://localhost:5678') await checkPublicHost(instance, fetcher);
     }
     if (operation) {
-      if (!['create', 'update', 'activate', 'deactivate', 'trigger', 'approval'].includes(operation)) throw new ConnectionError('Unsupported workflow action.');
+      if (!['create', 'update', 'activate', 'deactivate', 'trigger', 'approval', 'provision'].includes(operation)) throw new ConnectionError('Unsupported workflow action.');
       const workflowId = requestUrl.searchParams.get('workflowId');
-      if (operation !== 'create' && (!workflowId || !/^[a-zA-Z0-9_-]{1,128}$/.test(workflowId))) throw new ConnectionError('Invalid workflow ID.');
+      if (operation !== 'create' && operation !== 'provision' && (!workflowId || !/^[a-zA-Z0-9_-]{1,128}$/.test(workflowId))) throw new ConnectionError('Invalid workflow ID.');
+      if (operation === 'provision') {
+        if (request.method !== 'POST') throw new ConnectionError('Unsupported request method.', 405);
+        const current = page(await n8nGet(saved.instance_url, key, 'workflows', { limit: '100' }, fetcher), workflow).data;
+        const duplicate = AI_CRAFTERS_SYSTEMS.find(system => current.filter(item => item.name === system.name && !item.archived).length > 1);
+        if (duplicate) throw new ConnectionError(`Resolve the duplicate workflows named ${duplicate.name} before provisioning.`, 409);
+        const credentials = page(await n8nGet(saved.instance_url, key, 'credentials', { limit: '100' }, fetcher), credential).data;
+        const gemini = credentials.find(item => item.type === 'googlePalmApi');
+        if (!gemini) throw new ConnectionError('Add a Google Gemini credential in n8n before provisioning the ecommerce Systems.', 409);
+        const existing = AI_CRAFTERS_SYSTEMS.filter(system => current.some(item => item.name === system.name && !item.archived)).map(system => system.name);
+        const created = [];
+        for (const system of AI_CRAFTERS_SYSTEMS.filter(item => !existing.includes(item.name))) {
+          const raw = asRecord(await n8nRequest(saved.instance_url, key, 'workflows', { method: 'POST', body: buildSystemWorkflow(system, gemini) }, fetcher));
+          const createdWorkflow = workflow(raw);
+          const activated = workflow(await n8nRequest(saved.instance_url, key, `workflows/${createdWorkflow.id}/activate`, { method: 'POST' }, fetcher));
+          created.push({ id: activated.id, name: activated.name, active: activated.active, agents: activated.nodes.length });
+        }
+        return Response.json({ created, existing, credential: { name: gemini.name, type: gemini.type } }, { headers });
+      }
       if (operation === 'activate' || operation === 'deactivate') {
         if (request.method !== 'POST') throw new ConnectionError('Unsupported request method.', 405);
         const raw = await n8nRequest(saved.instance_url, key, `workflows/${workflowId}/${operation}`, { method: 'POST' }, fetcher);
