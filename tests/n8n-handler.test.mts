@@ -17,13 +17,17 @@ function fixture() {
   const seen: string[] = [];
   const seenRequests: string[] = [];
   let manualWorkflow: Record<string, unknown> = { id: 'w3', name: 'Manual workflow', active: false, nodes: [{ id: 'manual', name: 'When clicking Execute workflow', type: 'n8n-nodes-base.manualTrigger', position: [0, 0], parameters: {} }, { id: 'work', name: 'Do work', type: 'n8n-nodes-base.set', position: [200, 0], parameters: {} }], connections: { 'When clicking Execute workflow': { main: [[{ node: 'Do work', type: 'main', index: 0 }]] } }, settings: {} };
+  let executionCount = 0;
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input)); seen.push(url.toString()); seenRequests.push(`${init?.method || 'GET'} ${url.pathname}`);
     if (url.hostname === 'cloudflare-dns.com') return Response.json({ Answer: [{ type: 1, data: '1.1.1.1' }] });
     const key = new Headers(init?.headers).get('X-N8N-API-KEY');
     if (key === 'invalid-test-key') return Response.json({ private: 'do-not-return' }, { status: 401 });
     if (url.pathname.endsWith('/credentials')) return Response.json({ data: [{ id: 'cred-1', name: 'Gemini account', type: 'googlePalmApi', data: { apiKey: 'private' } }], nextCursor: null });
-    if (url.pathname.endsWith('/executions')) return key === 'workflow-only-key' ? Response.json({}, { status: 403 }) : Response.json({ data: [{ id: 'e1', workflowId: 'w1', status: 'success' }], nextCursor: 'more-executions' });
+    if (url.pathname.endsWith('/executions')) { const workflowId = url.searchParams.get('workflowId'); const current = executionCount > 0 && workflowId === 'w1' ? [{ id: 'e2', workflowId: 'w1', status: 'success' }, { id: 'e1', workflowId: 'w1', status: 'success' }] : executionCount > 0 && workflowId === 'w2' ? [{ id: 'e4', workflowId: 'w2', status: 'success' }] : executionCount > 0 && workflowId === 'w3' ? [{ id: executionCount > 1 ? 'e5' : 'e3', workflowId: 'w3', status: 'success' }] : [{ id: 'e1', workflowId: 'w1', status: 'success' }]; return key === 'workflow-only-key' ? Response.json({}, { status: 403 }) : Response.json({ data: current, nextCursor: 'more-executions' }); }
+    if (url.pathname.endsWith('/executions/e2')) return Response.json({ id: 'e2', workflowId: 'w1', status: 'success', data: { resultData: { lastNodeExecuted: 'Return', runData: { Return: [{ executionTime: 3, data: { main: [[{ json: { result: 'done' } }]] } }] } } } });
+    if (url.pathname.endsWith('/executions/e3') || url.pathname.endsWith('/executions/e5')) return Response.json({ id: url.pathname.endsWith('/e5') ? 'e5' : 'e3', workflowId: 'w3', status: 'success', data: { resultData: { lastNodeExecuted: 'Do work', runData: { 'Do work': [{ executionTime: 2, data: { main: [[{ json: { completed: true } }]] } }] } } } });
+    if (url.pathname.endsWith('/executions/e4')) return Response.json({ id: 'e4', workflowId: 'w2', status: 'success', data: { resultData: { lastNodeExecuted: 'Receive', runData: { Receive: [{ executionTime: 2, data: { main: [[{ json: { accepted: true } }]] } }] } } } });
     if (url.pathname.endsWith('/workflows/w2/activate')) return Response.json({ id: 'w2', name: 'Inactive webhook', active: true, nodes: [{ id: 'hook-2', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'inactive-hook' } }] });
     if (url.pathname.endsWith('/workflows/w2')) return Response.json({ id: 'w2', name: 'Inactive webhook', active: false, nodes: [{ id: 'hook-2', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'inactive-hook' } }] });
     if (url.pathname.endsWith('/workflows/w3/activate')) { manualWorkflow = { ...manualWorkflow, active: true }; return Response.json(manualWorkflow); }
@@ -31,7 +35,7 @@ function fixture() {
     if (url.pathname.endsWith('/workflows/w3')) return Response.json(manualWorkflow);
     if (url.pathname.endsWith('/workflows/w1')) return Response.json({ id: 'w1', name: 'Product & Market Intelligence', active: true, nodes: [{ id: 'hook', name: 'Receive', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'demo-hook' } }, { id: 'approval', name: 'AI Crafters Pro Approval', type: 'n8n-nodes-base.webhook', parameters: { httpMethod: 'POST', path: 'approval-hook' } }], credentials: 'private' });
     if (url.pathname.endsWith('/webhook/approval-hook')) return Response.json(JSON.parse(String(init?.body)));
-    if (url.pathname.endsWith('/webhook/demo-hook') || url.pathname.endsWith('/webhook/inactive-hook') || url.pathname.includes('/webhook/operator-core-')) return Response.json({ accepted: true });
+    if (url.pathname.endsWith('/webhook/demo-hook') || url.pathname.endsWith('/webhook/inactive-hook') || url.pathname.includes('/webhook/operator-core-')) { executionCount++; return Response.json({ accepted: true }); }
     return Response.json({ data: [{ id: url.searchParams.has('cursor') ? 'w2' : 'w1', name: 'Connected workflow', active: true, nodes: [] }], nextCursor: url.searchParams.has('cursor') ? null : 'opaque+/=' });
   };
   const request = (owner: string | null, method = 'GET', body?: unknown, query = '', origin = 'https://dashboard.test') => new Request(`https://dashboard.test/api/n8n${query}`, { method, headers: { ...(owner ? { 'oai-authenticated-user-id': owner } : {}), Origin: origin, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
@@ -84,7 +88,8 @@ test('active webhook workflows accept bounded test input without exposing the AP
   const f = fixture(); await f.connect('a');
   const response = await handleN8nRequest(f.request('a', 'POST', { orderId: 'DEMO-1' }, '?operation=trigger&workflowId=w1'), f.bindings, f.fetcher);
   assert.equal(response.status, 200);
-  const body = await response.text(); assert.deepEqual(JSON.parse(body), { status: 'success', output: { accepted: true } });
+  const body = await response.text(); const parsed = JSON.parse(body) as { status: string; output: unknown; execution: { id: string; steps: Array<{ name: string; output: unknown }> } };
+  assert.equal(parsed.status, 'success'); assert.deepEqual(parsed.output, { accepted: true }); assert.equal(parsed.execution.id, 'e2'); assert.deepEqual(parsed.execution.steps[0].output, [{ result: 'done' }]);
   assert.ok(f.seen.some(url => url.endsWith('/webhook/demo-hook')));
   assert.ok(!body.includes('test-api-key'));
 });

@@ -1,79 +1,263 @@
 'use client';
-
-import { createElement, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import Image from 'next/image';
-import { AlertTriangle, ArrowLeft, Bot, Box, Check, ChevronRight, CircleOff, Clock3, ExternalLink, GitBranch, Globe2, LoaderCircle, LockKeyhole, Network, Pause, Play, RefreshCw, RotateCcw, Search, Settings2, ShieldCheck, Sparkles, Webhook, X, ZoomIn, ZoomOut } from 'lucide-react';
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
-import { ConnectionPanel, n8nClientRequest, useN8n } from '@/components/n8n-panels';
-import { agentRunState, hasApprovalWebhook, mapSystems, runDuration, systemMetrics, unmatchedWorkflows, workflowRuns, type AgentRunState, type MappedSystem } from '@/lib/ai-crafters';
-import type { ApprovalAction, ApprovalResult, Execution, ExecutionDetail, Page, Workflow, WorkflowNode } from '@/lib/n8n-types';
-
-const failedStatuses = new Set(['error', 'crashed', 'canceled']);
-const liveStatuses = new Set(['running', 'new', 'waiting']);
-function formatDate(value?: string | null) { if (!value) return 'Never'; const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Unavailable' : date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); }
-function relativeDate(value?: string | null) { if (!value) return 'Never run'; const elapsed = Date.now() - Date.parse(value); if (!Number.isFinite(elapsed)) return 'Unknown time'; if (elapsed < 60_000) return 'Just now'; if (elapsed < 3_600_000) return `${Math.max(1, Math.round(elapsed / 60_000))}m ago`; if (elapsed < 86_400_000) return `${Math.round(elapsed / 3_600_000)}h ago`; return `${Math.round(elapsed / 86_400_000)}d ago`; }
-function formatDuration(value: number | null) { if (value === null) return '—'; if (value < 1000) return `${value}ms`; if (value < 60_000) return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}s`; return `${Math.floor(value / 60_000)}m ${Math.round((value % 60_000) / 1000)}s`; }
-function cleanType(type: string) { return type.split('.').at(-1)?.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[-_]/g, ' ') || 'Agent'; }
-function iconFor(node: WorkflowNode) { if (/agent|gemini|openai|chat|llm/i.test(node.type)) return Bot; if (/webhook/i.test(node.type)) return Webhook; if (/http/i.test(node.type)) return Globe2; if (/if|switch|merge/i.test(node.type)) return GitBranch; return Box; }
-function statusLabel(status?: string) { if (!status) return 'No runs'; if (status === 'success' || status === 'finished') return 'Healthy'; if (liveStatuses.has(status)) return 'Running'; if (failedStatuses.has(status)) return 'Needs attention'; return status; }
-
+import Link from 'next/link';
+import { RefreshCw, Settings2, Search, Sun, Moon, Eye, EyeOff, Pencil, Workflow as WorkflowIcon } from 'lucide-react';
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from './ui/sheet';
+import { ConnectionPanel, useN8n } from './n8n-panels';
+import { SystemMap } from './system-map';
+import { SystemView } from './system-view';
+import { WorkflowStudio } from './workflow-studio';
+import { mapSystems, unmatchedWorkflows } from '@/lib/ai-crafters';
+import type { Workflow } from '@/lib/n8n-types';
+const hiddenWorkflowStorageKey = 'acp-hidden-workflows';
 export function OperationsDashboard() {
-  const n8n = useN8n(); const [selectedNumber, setSelectedNumber] = useState<number | null>(null); const [connectionOpen, setConnectionOpen] = useState(false); const [query, setQuery] = useState('');
-  const systems = useMemo(() => mapSystems(n8n.data.workflows.data), [n8n.data.workflows.data]);
-  const unmatched = useMemo(() => unmatchedWorkflows(n8n.data.workflows.data), [n8n.data.workflows.data]);
-  const selected = systems.find((system) => system.number === selectedNumber) || null;
-  if (selected?.workflow) return <><SystemConsole system={selected as MappedSystem & { workflow: Workflow }} n8n={n8n} onBack={() => setSelectedNumber(null)} onConnection={() => setConnectionOpen(true)} /><ConnectionSheet open={connectionOpen} onOpenChange={setConnectionOpen} n8n={n8n} /></>;
-  const mapped = systems.filter((system) => system.workflow); const running = n8n.data.executions.data.filter((run) => liveStatuses.has(run.status)).length;
-  const issues = mapped.filter((system) => { const latest = workflowRuns(n8n.data.executions.data, system.workflow?.id)[0]; return latest && failedStatuses.has(latest.status); }).length;
-  const visible = systems.filter((system) => `${system.name} ${system.group}`.toLowerCase().includes(query.trim().toLowerCase()));
-  return <main className="acp-shell">
-    <header className="acp-topbar"><Brand /><div className="acp-top-actions"><button className="icon-button" onClick={() => void n8n.refresh()} disabled={!!n8n.busy} aria-label="Refresh n8n data"><RefreshCw size={17} className={n8n.busy === 'sync' ? 'spin-icon' : ''} /></button><button className="connection-pill" onClick={() => setConnectionOpen(true)}><i className={n8n.data.connected ? 'connected' : ''} /><span>{n8n.data.connected ? 'n8n connected' : 'Connect n8n'}</span><Settings2 size={15} /></button></div></header>
-    <section className="overview-heading"><div><span className="mono-label">AI CRAFTERS PRO / OPERATING SYSTEM</span><h1>Your autonomous commerce operation</h1><p>Every System is a real n8n workflow. Every Agent is a node you can inspect.</p></div><div className="overview-stats"><SummaryStat label="Systems live" value={`${mapped.length} / 10`} tone="violet" /><SummaryStat label="Running now" value={String(running)} tone="gold" /><SummaryStat label="Need attention" value={String(issues)} tone={issues ? 'danger' : 'calm'} /></div></section>
-    {n8n.error && <div className="global-alert"><AlertTriangle size={17} /><span>{n8n.error}</span></div>}
-    <section className="systems-toolbar"><div className="system-search"><Search size={17} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search Systems" aria-label="Search Systems" /></div><span>{n8n.data.syncedAt ? `Synced ${relativeDate(n8n.data.syncedAt)}` : 'Awaiting connection'}</span></section>
-    <section className="systems-map" aria-label="AI Crafters Pro Systems"><div className="map-orbit" aria-hidden="true" /><div className="operator-core"><div className="core-rings"><Sparkles size={24} /></div><span>OPERATOR BRAIN</span><strong>AI Crafters Pro</strong><small>{mapped.length ? `${mapped.length} Systems online` : 'Waiting for n8n'}</small></div><div className="systems-grid">{visible.map((system) => <SystemCard key={system.number} system={system} executions={n8n.data.executions.data} onOpen={() => system.workflow && setSelectedNumber(system.number)} />)}</div></section>
-    <footer className="overview-foot"><div><ShieldCheck size={15} /><span>Live operational data only</span></div>{unmatched.length > 0 && <div className="diagnostic-note"><CircleOff size={15} /><span>{unmatched.length} unmatched workflow{unmatched.length === 1 ? '' : 's'} — rename to an exact System name to map</span></div>}</footer>
-    <ConnectionSheet open={connectionOpen} onOpenChange={setConnectionOpen} n8n={n8n} />
-  </main>;
+  const n8n = useN8n();
+  const [system, setSystem] = useState<number | null>(null);
+  const [execution, setExecution] = useState<string | null>(null);
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark');
+  const [connection, setConnection] = useState(false);
+  const [query, setQuery] = useState('');
+  const [hiddenWorkflowIds, setHiddenWorkflowIds] = useState<string[]>([]);
+  const [workflowDetail, setWorkflowDetail] = useState<Workflow | null>(null);
+  const [editingWorkflow, setEditingWorkflow] = useState<Workflow | null>(null);
+  useEffect(() => {
+    const sync = () => {
+      const p = new URLSearchParams(location.search);
+      const n = Number(p.get('system'));
+      setSystem(n >= 1 && n <= 10 ? n : null);
+      setExecution(p.get('execution'));
+    };
+    queueMicrotask(sync);
+    addEventListener('popstate', sync);
+    queueMicrotask(() => {
+      try {
+        const savedTheme = localStorage.getItem('acp-theme') === 'light' ? 'light' : 'dark';
+        setTheme(savedTheme);
+        document.documentElement.dataset.theme = savedTheme;
+        const savedHidden = JSON.parse(localStorage.getItem(hiddenWorkflowStorageKey) || '[]');
+        if (Array.isArray(savedHidden)) setHiddenWorkflowIds(savedHidden.filter((id): id is string => typeof id === 'string'));
+      } catch {}
+    });
+    return () => removeEventListener('popstate', sync);
+  }, []);
+  function navigate(
+    n: number | null,
+    id: string | null = null,
+    replace = false,
+  ) {
+    const url = new URL(location.href);
+    if (n) url.searchParams.set('system', String(n));
+    else url.searchParams.delete('system');
+    if (id) url.searchParams.set('execution', id);
+    else url.searchParams.delete('execution');
+    history[replace ? 'replaceState' : 'pushState']({}, '', url);
+    setSystem(n);
+    setExecution(id);
+  }
+  const systems = mapSystems(n8n.data.workflows.data);
+  const selected = systems.find((s) => s.number === system);
+  const ids = new Set(
+    systems.flatMap((s) => (s.workflow ? [s.workflow.id] : [])),
+  );
+  const runs = n8n.data.executions.data.filter((r) => ids.has(r.workflowId));
+  const unmatched = unmatchedWorkflows(n8n.data.workflows.data);
+  const hiddenSet = new Set(hiddenWorkflowIds);
+  const visibleOtherWorkflows = unmatched.filter((workflow) => !hiddenSet.has(workflow.id));
+  const hiddenWorkflows = n8n.data.workflows.data.filter((workflow) => !workflow.archived && hiddenSet.has(workflow.id));
+  function setWorkflowHidden(workflow: Workflow, hidden: boolean) {
+    setHiddenWorkflowIds((current) => {
+      const next = hidden ? [...new Set([...current, workflow.id])] : current.filter((id) => id !== workflow.id);
+      try { localStorage.setItem(hiddenWorkflowStorageKey, JSON.stringify(next)); } catch {}
+      if (workflowDetail?.id === workflow.id) setWorkflowDetail(hidden ? null : workflow);
+      return next;
+    });
+  }
+  if (editingWorkflow) return <WorkflowStudio workflow={editingWorkflow} instanceUrl={n8n.data.instanceUrl} onClose={() => setEditingWorkflow(null)} onChanged={async () => { setEditingWorkflow(null); await n8n.refresh(); }} />;
+  return (
+    <main className="hud-shell">
+      <header className="hud-header">
+        <Link
+          href="?"
+          onClick={(e) => {
+            e.preventDefault();
+            navigate(null);
+          }}
+        >
+          <span className="brand-lockup">
+            <Image
+              src="/ai-crafters-pro-logo.png"
+              alt="AI Crafters Pro"
+              width={161}
+              height={40}
+              priority
+            />
+            <span className="light-brand" aria-hidden="true"><strong>AI Crafters</strong><span>PRO</span></span>
+          </span>
+        </Link>
+        <div className="header-location">
+          <label className="hud-search">
+            <Search size={17} />
+            <input
+              aria-label="Search Systems"
+              placeholder="Find a System"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+          </label>
+        </div>
+        <div className="header-actions">
+          <button
+            className="icon-button"
+            aria-label="Refresh n8n"
+            disabled={!!n8n.busy}
+            onClick={() => void n8n.refresh()}
+          >
+            <RefreshCw size={18} />
+          </button>
+          <button className="ghost-action" onClick={() => setConnection(true)}>
+            <Settings2 size={17} />
+            {n8n.error
+              ? 'Connection error'
+              : n8n.busy === 'loading'
+                ? 'Connecting…'
+                : n8n.data.connected
+                  ? 'n8n connected'
+                  : 'Connect n8n'}
+          </button>
+          <button
+            className="icon-button theme-toggle"
+            aria-label={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            aria-pressed={theme === 'light'}
+            onClick={() => {
+              const nextTheme = theme === 'dark' ? 'light' : 'dark';
+              try { localStorage.setItem('acp-theme', nextTheme); } catch {}
+              document.documentElement.dataset.theme = nextTheme;
+              setTheme(nextTheme);
+            }}
+          >
+            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
+          </button>
+        </div>
+      </header>
+      {n8n.error && (
+        <p className="hud-alert" role="alert">
+          {n8n.error}
+        </p>
+      )}
+      {selected?.workflow && !hiddenSet.has(selected.workflow.id) ? (
+        <SystemView
+          key={selected.workflow.id}
+          workflow={selected.workflow}
+          group={selected.group}
+          n8n={n8n}
+          executionId={execution}
+          onSelectExecution={(id, replace) =>
+            navigate(selected.number, id, replace)
+          }
+          onBack={() => navigate(null)}
+          hiddenOnMap={hiddenSet.has(selected.workflow.id)}
+          onToggleMapVisibility={() => { setWorkflowHidden(selected.workflow!, true); navigate(null); }}
+        />
+      ) : (
+        <>
+          {selected && (
+            <p className="hud-alert">
+              {selected.name}:{' '}
+              {selected.duplicateIds.length
+                ? 'Duplicate workflow names. Resolve them in n8n.'
+                : 'Not connected. Use this exact workflow name in n8n.'}
+              <button onClick={() => navigate(null)}>Dismiss</button>
+            </p>
+          )}
+          <SystemMap
+            systems={systems.filter((item) => !item.workflow || !hiddenSet.has(item.workflow.id))}
+            executions={runs}
+            connected={n8n.data.connected}
+            historyError={n8n.data.executionError}
+            query={query}
+            onSelect={(n) => navigate(n)}
+            otherWorkflows={visibleOtherWorkflows}
+            onSelectWorkflow={setWorkflowDetail}
+            hiddenWorkflowIds={hiddenWorkflowIds}
+          />
+          <footer className="activity-dock">
+            <div>
+              <strong>
+                {systems.filter((s) => s.workflow?.active).length}
+                <small>/ 10</small>
+              </strong>
+              <span>Active Systems</span>
+            </div>
+            <div>
+              <strong>
+                {n8n.data.executionError
+                  ? '—'
+                  : runs.filter((r) =>
+                      ['running', 'new', 'waiting'].includes(r.status),
+                    ).length}
+              </strong>
+              <span>Running · loaded window</span>
+            </div>
+            <div>
+              <strong>{n8n.data.executionError ? '—' : runs.length}</strong>
+              <span>Mapped runs loaded</span>
+            </div>
+            <div className="dock-note">
+              {n8n.data.executionError
+                ? 'History unavailable'
+                : n8n.data.syncedAt
+                  ? 'Updated ' +
+                    new Date(n8n.data.syncedAt).toLocaleTimeString()
+                  : 'Awaiting connection'}
+            </div>
+          </footer>
+          <details className="connection-diagnostics">
+            <summary>
+              Connection diagnostics · {unmatched.length} unmatched workflows
+            </summary>
+            <p>All account workflows are loaded. Only exact-name, non-archived workflows appear on the System map.</p>
+            {unmatched.length ? unmatched.map((w) => (
+              <p key={w.id}>{w.name}</p>
+            )) : <p>No unmatched workflows.</p>}
+            {n8n.data.workflows.nextCursor && (
+              <button
+                disabled={!!n8n.busy}
+                onClick={() => void n8n.loadMore('workflows')}
+              >
+                Load more workflows to complete mapping
+              </button>
+            )}
+            {n8n.data.executionError && <p>{n8n.data.executionError}</p>}
+          </details>
+          {workflowDetail && <section className="workflow-detail-panel" aria-label="Workflow details">
+            <div className="workflow-detail-heading"><div><span className="eyebrow">ACCOUNT WORKFLOW</span><h2>{workflowDetail.name}</h2></div><button className="icon-button" onClick={() => setWorkflowDetail(null)} aria-label="Close workflow details">×</button></div>
+            <dl className="workflow-detail-facts"><div><dt>Status</dt><dd>{workflowDetail.active ? 'Active' : 'Paused'}</dd></div><div><dt>Steps</dt><dd>{workflowDetail.nodes.length}</dd></div><div><dt>Connections</dt><dd>{workflowDetail.edges.length}</dd></div></dl>
+            <div className="workflow-detail-actions"><button className="primary-action" onClick={() => setEditingWorkflow(workflowDetail)}><Pencil size={15} /> Open editor</button><button className="ghost-action" onClick={() => setWorkflowHidden(workflowDetail, true)}><EyeOff size={15} /> Hide from map</button></div>
+          </section>}
+          <section className="hidden-workflows" aria-label="Hidden workflows">
+            <div className="hidden-workflows-heading"><div><span className="eyebrow">MAP VISIBILITY</span><h2>Hidden workflows</h2></div><span>{hiddenWorkflows.length} hidden</span></div>
+            {hiddenWorkflows.length ? <div className="hidden-workflow-list">{hiddenWorkflows.map((workflow) => <div className="hidden-workflow-row" key={workflow.id}><WorkflowIcon size={17} /><div><strong>{workflow.name}</strong><small>{workflow.active ? 'Active' : 'Paused'} · {workflow.nodes.length} steps</small></div><button className="ghost-action" onClick={() => setWorkflowHidden(workflow, false)}><Eye size={15} /> Show on map</button></div>)}</div> : <p>No workflows are hidden from the map.</p>}
+          </section>
+        </>
+      )}
+      <Sheet open={connection} onOpenChange={setConnection}>
+        <SheetContent className="acp-sheet">
+          <SheetHeader>
+            <SheetTitle>n8n connection</SheetTitle>
+            <SheetDescription>
+              Your workflows remain the source of truth.
+            </SheetDescription>
+          </SheetHeader>
+          <ConnectionPanel state={n8n} />
+        </SheetContent>
+      </Sheet>
+    </main>
+  );
 }
-
-function ConnectionSheet({ open, onOpenChange, n8n }: { open: boolean; onOpenChange: (open: boolean) => void; n8n: N8nState }) { return <Sheet open={open} onOpenChange={onOpenChange}><SheetContent className="acp-sheet"><SheetHeader><span className="mono-label">INTEGRATION</span><SheetTitle>n8n connection</SheetTitle><SheetDescription>Your n8n account remains the source of truth.</SheetDescription></SheetHeader><ConnectionPanel state={n8n} /></SheetContent></Sheet>; }
-
-function Brand() { return <div className="acp-brand"><Image src="/ai-crafters-pro-logo.png" alt="AI Crafters Pro" width={161} height={40} priority /></div>; }
-function SummaryStat({ label, value, tone }: { label: string; value: string; tone: string }) { return <div className={`summary-stat ${tone}`}><span>{label}</span><strong>{value}</strong></div>; }
-function SystemCard({ system, executions, onOpen }: { system: MappedSystem; executions: Execution[]; onOpen: () => void }) {
-  const runs = workflowRuns(executions, system.workflow?.id); const latest = runs[0]; const duplicate = system.duplicateIds.length > 0; const state = duplicate ? 'duplicate' : !system.workflow ? 'locked' : latest && failedStatuses.has(latest.status) ? 'issue' : latest && liveStatuses.has(latest.status) ? 'running' : 'live';
-  return <button className={`system-card ${state}`} onClick={onOpen} disabled={!system.workflow}><span className="system-number">SYSTEM {String(system.number).padStart(2, '0')}</span><span className="system-glyph">{duplicate ? <AlertTriangle /> : system.workflow ? <Network /> : <LockKeyhole />}</span><div className="system-copy"><small>{system.group}</small><strong>{system.name}</strong></div><div className="system-card-bottom"><span className={`health-dot ${state}`} /><span>{duplicate ? 'Duplicate names' : system.workflow ? statusLabel(latest?.status) : 'Not connected'}</span>{system.workflow && <><i /><span>{system.workflow.nodes.length} Agents</span><ChevronRight size={15} /></>}</div></button>;
-}
-
-type N8nState = ReturnType<typeof useN8n>;
-function SystemConsole({ system, n8n, onBack, onConnection }: { system: MappedSystem & { workflow: Workflow }; n8n: N8nState; onBack: () => void; onConnection: () => void }) {
-  const workflow = system.workflow; const [runs, setRuns] = useState<Page<Execution>>({ data: workflowRuns(n8n.data.executions.data, workflow.id), nextCursor: null }); const [detail, setDetail] = useState<ExecutionDetail | null>(null); const [selectedNode, setSelectedNode] = useState<WorkflowNode | null>(null); const [busy, setBusy] = useState(''); const [error, setError] = useState(''); const [message, setMessage] = useState(''); const [agentQuery, setAgentQuery] = useState(''); const [zoom, setZoom] = useState(1); const [pan, setPan] = useState({ x: 0, y: 0 }); const drag = useRef<{ x: number; y: number; panX: number; panY: number; pointerId: number } | null>(null);
-  const metrics = systemMetrics(runs.data); const latest = runs.data[0];
-  async function inspect(run: Execution) { setBusy(`detail-${run.id}`); setError(''); try { setDetail(await n8nClientRequest<ExecutionDetail>(`?resource=execution&executionId=${encodeURIComponent(run.id)}`)); } catch (issue) { setError(issue instanceof Error ? issue.message : 'Execution details are unavailable.'); } finally { setBusy(''); } }
-  async function loadRuns(cursor?: string | null, append = false) { const suffix = cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''; const next = await n8nClientRequest<Page<Execution>>(`?resource=executions&workflowId=${encodeURIComponent(workflow.id)}${suffix}`); setRuns((old) => ({ data: append ? [...old.data, ...next.data.filter((run) => !old.data.some((item) => item.id === run.id))] : next.data, nextCursor: next.nextCursor })); return next; }
-  useEffect(() => { let canceled = false; void n8nClientRequest<Page<Execution>>(`?resource=executions&workflowId=${encodeURIComponent(workflow.id)}`).then(async (page) => { if (canceled) return; setRuns(page); if (page.data[0]) try { const value = await n8nClientRequest<ExecutionDetail>(`?resource=execution&executionId=${encodeURIComponent(page.data[0].id)}`); if (!canceled) setDetail(value); } catch { /* Detail scope can be unavailable. */ } }).catch((issue) => { if (!canceled) setError(issue instanceof Error ? issue.message : 'Could not load System history.'); }).finally(() => { if (!canceled) setBusy(''); }); return () => { canceled = true; }; }, [workflow.id]);
-  async function runSystem() { setBusy('run'); setError(''); setMessage('Starting the System in n8n…'); const prior = new Set(runs.data.map((run) => run.id)); try { await n8nClientRequest(`?operation=trigger&workflowId=${encodeURIComponent(workflow.id)}`, { method: 'POST', body: JSON.stringify({ source: 'ai-crafters-pro-dashboard' }) }); let found: Execution | undefined; for (let attempt = 0; attempt < 30; attempt++) { await new Promise((resolve) => setTimeout(resolve, 2000)); const page = await loadRuns(); found = page.data.find((run) => !prior.has(run.id)); if (found) { const nextDetail = await n8nClientRequest<ExecutionDetail>(`?resource=execution&executionId=${encodeURIComponent(found.id)}`); setDetail(nextDetail); if (!liveStatuses.has(found.status)) break; } } setMessage(found ? `Execution #${found.id} ${liveStatuses.has(found.status) ? 'is still running in n8n' : statusLabel(found.status).toLowerCase()}.` : 'Run accepted. n8n history has not reported it yet.'); await n8n.refresh(); } catch (issue) { setError(issue instanceof Error ? issue.message : 'The System could not be started.'); setMessage(''); } finally { setBusy(''); } }
-  async function toggleActive() { setBusy('toggle'); setError(''); setMessage(''); try { await n8nClientRequest(`?operation=${workflow.active ? 'deactivate' : 'activate'}&workflowId=${encodeURIComponent(workflow.id)}`, { method: 'POST', body: '{}' }); await n8n.refresh(); setMessage(workflow.active ? 'System paused.' : 'System activated.'); } catch (issue) { setError(issue instanceof Error ? issue.message : 'The System state could not be changed.'); } finally { setBusy(''); } }
-  async function approve(action: ApprovalAction) { if (!detail) return; setBusy(action); setError(''); setMessage(''); try { const result = await n8nClientRequest<ApprovalResult>(`?operation=approval&workflowId=${encodeURIComponent(workflow.id)}`, { method: 'POST', body: JSON.stringify({ action, executionId: detail.id }) }); setMessage(`${result.action === 'approve' ? 'Approval' : 'Rejection'} accepted by n8n for execution #${detail.id}.`); } catch (issue) { setError(issue instanceof Error ? issue.message : 'The approval action failed.'); } finally { setBusy(''); } }
-  const nodeMatches = workflow.nodes.filter((node) => `${node.name} ${cleanType(node.type)}`.toLowerCase().includes(agentQuery.toLowerCase())); const detailStatus = latest ? statusLabel(latest.status) : workflow.active ? 'Waiting for trigger' : 'Paused';
-  return <main className="console-shell">
-    <header className="console-topbar"><button className="back-button" onClick={onBack}><ArrowLeft size={17} /> All Systems</button><Brand /><div className="console-actions"><button className="ghost-action" onClick={onConnection}><Settings2 size={15} /> Connection</button><button className="ghost-action" onClick={() => void toggleActive()} disabled={!!busy}>{workflow.active ? <Pause size={15} /> : <Play size={15} />}{workflow.active ? 'Pause' : 'Activate'}</button><button className="primary-action" onClick={() => void runSystem()} disabled={!!busy}>{busy === 'run' ? <LoaderCircle className="spin-icon" size={16} /> : <Play size={16} />} Run System</button></div></header>
-    <section className="console-titlebar"><div><span className="mono-label">SYSTEM {String(system.number).padStart(2, '0')} / {system.group.toUpperCase()}</span><h1>{system.name}</h1></div><div className={`system-state ${latest && failedStatuses.has(latest.status) ? 'issue' : latest && liveStatuses.has(latest.status) ? 'running' : ''}`}><i /><span>{detailStatus}</span><small>{latest ? relativeDate(latest.startedAt) : `${workflow.nodes.length} Agents`}</small></div></section>
-    {(error || message) && <div className={`console-message ${error ? 'error' : ''}`}>{error ? <AlertTriangle size={16} /> : <Check size={16} />}<span>{error || message}</span><button onClick={() => { setError(''); setMessage(''); }}><X size={14} /></button></div>}
-    <div className="console-layout"><section className="graph-panel"><div className="graph-toolbar"><div className="agent-search"><Search size={15} /><input value={agentQuery} onChange={(event) => setAgentQuery(event.target.value)} placeholder="Find an Agent" /></div><div><button onClick={() => setZoom((value) => Math.max(.65, value - .15))}><ZoomOut size={16} /></button><span>{Math.round(zoom * 100)}%</span><button onClick={() => setZoom((value) => Math.min(1.6, value + .15))}><ZoomIn size={16} /></button><button onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}><RotateCcw size={15} /></button></div></div><div className="graph-stage" onPointerDown={(event) => { if ((event.target as HTMLElement).closest('button')) return; drag.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y, pointerId: event.pointerId }; event.currentTarget.setPointerCapture(event.pointerId); }} onPointerMove={(event) => { const value = drag.current; if (!value || value.pointerId !== event.pointerId) return; setPan({ x: value.panX + event.clientX - value.x, y: value.panY + event.clientY - value.y }); }} onPointerUp={() => { drag.current = null; }}><WorkflowGraph workflow={workflow} detail={detail} selectedNode={selectedNode} visibleNodes={new Set(nodeMatches.map((node) => node.id))} zoom={zoom} pan={pan} onSelect={setSelectedNode} />{!workflow.nodes.length && <div className="graph-empty"><Network size={28} /><strong>No Agents found</strong><span>This n8n workflow has no nodes.</span></div>}<div className="graph-legend"><span><i className="success" /> Completed</span><span><i className="running" /> Running</span><span><i className="error" /> Failed</span><span><i /> Waiting</span></div></div><div className="mobile-agent-list">{nodeMatches.map((node) => <AgentRow key={node.id} node={node} state={agentRunState(node, workflow, detail)} selected={selectedNode?.id === node.id} onSelect={() => setSelectedNode(node)} />)}</div></section>
-      <aside className="system-sidebar"><section className="metric-section"><div className="section-heading"><span>SYSTEM PULSE</span><small>Last {metrics.runCount} loaded runs</small></div><div className="metric-grid"><Metric label="Success rate" value={metrics.successRate === null ? '—' : `${metrics.successRate}%`} /><Metric label="Avg duration" value={formatDuration(metrics.averageDurationMs)} /><Metric label="Runs loaded" value={String(metrics.runCount)} /><Metric label="Recent failures" value={String(metrics.failures)} /></div></section>{selectedNode ? <AgentInspector node={selectedNode} workflow={workflow} detail={detail} onClose={() => setSelectedNode(null)} /> : <AgentRoster nodes={nodeMatches} workflow={workflow} detail={detail} onSelect={setSelectedNode} />}<ApprovalPanel enabled={hasApprovalWebhook(workflow)} detail={detail} busy={busy} onAction={approve} /></aside></div>
-    <section className="timeline-panel"><div className="section-heading"><div><span>EXECUTION TIMELINE</span><small>Real history from n8n</small></div><button onClick={() => void loadRuns()} disabled={!!busy}><RefreshCw size={15} /> Refresh</button></div>{!runs.data.length ? <div className="timeline-empty"><Clock3 size={18} /><span>No executions are available for this System.</span></div> : <div className="timeline-list">{runs.data.map((run) => <button key={run.id} className={detail?.id === run.id ? 'selected' : ''} onClick={() => void inspect(run)}><span className={`run-indicator ${failedStatuses.has(run.status) ? 'error' : liveStatuses.has(run.status) ? 'running' : 'success'}`} /><strong>#{run.id}</strong><span>{run.mode || 'execution'}</span><span>{formatDate(run.startedAt)}</span><span>{formatDuration(runDuration(run))}</span><em>{statusLabel(run.status)}</em><ChevronRight size={14} /></button>)}</div>}{runs.nextCursor && <button className="load-more" onClick={() => void loadRuns(runs.nextCursor, true)} disabled={!!busy}>Load older executions</button>}{detail && <ExecutionDetailPanel detail={detail} instanceUrl={n8n.data.instanceUrl} />}</section>
-  </main>;
-}
-
-function WorkflowGraph({ workflow, detail, selectedNode, visibleNodes, zoom, pan, onSelect }: { workflow: Workflow; detail: ExecutionDetail | null; selectedNode: WorkflowNode | null; visibleNodes: Set<string>; zoom: number; pan: { x: number; y: number }; onSelect: (node: WorkflowNode) => void }) {
-  const points = useMemo(() => { const xs = workflow.nodes.map((node) => node.position[0]); const ys = workflow.nodes.map((node) => node.position[1]); const minX = Math.min(...xs, 0); const maxX = Math.max(...xs, 1); const minY = Math.min(...ys, 0); const maxY = Math.max(...ys, 1); return new Map(workflow.nodes.map((node, index) => [node.name, { x: maxX === minX ? 500 : 100 + ((node.position[0] - minX) / (maxX - minX)) * 800, y: maxY === minY ? 140 + index * Math.min(95, 350 / Math.max(1, workflow.nodes.length - 1)) : 80 + ((node.position[1] - minY) / (maxY - minY)) * 400 }])); }, [workflow]);
-  return <div className="graph-plane" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}><svg viewBox="0 0 1000 560">{workflow.edges.map((edge, index) => { const from = points.get(edge.from); const to = points.get(edge.to); if (!from || !to) return null; const fromNode = workflow.nodes.find((node) => node.name === edge.from); const toNode = workflow.nodes.find((node) => node.name === edge.to); const fromState = fromNode ? agentRunState(fromNode, workflow, detail) : 'waiting'; const toState = toNode ? agentRunState(toNode, workflow, detail) : 'waiting'; const state = toState === 'running' ? 'running' : toState === 'error' ? 'error' : fromState === 'success' && toState === 'success' ? 'success' : ''; const bend = (from.x + to.x) / 2; return <path key={`${edge.from}-${edge.to}-${index}`} className={state} d={`M ${from.x + 66} ${from.y} C ${bend} ${from.y}, ${bend} ${to.y}, ${to.x - 66} ${to.y}`} />; })}</svg>{workflow.nodes.map((node) => { const point = points.get(node.name)!; const state = agentRunState(node, workflow, detail); const dimmed = visibleNodes.size !== workflow.nodes.length && !visibleNodes.has(node.id); return <button key={node.id} className={`agent-node ${state} ${selectedNode?.id === node.id ? 'selected' : ''} ${dimmed ? 'dimmed' : ''}`} style={{ left: point.x, top: point.y }} onClick={() => onSelect(node)}><span className="agent-node-icon">{createElement(iconFor(node), { size: 19 })}</span><span><small>{cleanType(node.type)}</small><strong>{node.name}</strong></span><i /></button>; })}</div>;
-}
-function AgentRow({ node, state, selected, onSelect }: { node: WorkflowNode; state: AgentRunState; selected: boolean; onSelect: () => void }) { return <button className={selected ? 'selected' : ''} onClick={onSelect}><span className={`agent-mini-icon ${state}`}>{createElement(iconFor(node), { size: 15 })}</span><span><strong>{node.name}</strong><small>{cleanType(node.type)}</small></span><em>{state}</em><ChevronRight size={14} /></button>; }
-function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><strong>{value}</strong><span>{label}</span></div>; }
-function AgentRoster({ nodes, workflow, detail, onSelect }: { nodes: WorkflowNode[]; workflow: Workflow; detail: ExecutionDetail | null; onSelect: (node: WorkflowNode) => void }) { return <section className="roster-section"><div className="section-heading"><span>AGENTS IN THIS SYSTEM</span><small>{nodes.length}</small></div><div className="agent-roster">{nodes.map((node) => <AgentRow key={node.id} node={node} state={agentRunState(node, workflow, detail)} selected={false} onSelect={() => onSelect(node)} />)}</div></section>; }
-function AgentInspector({ node, workflow, detail, onClose }: { node: WorkflowNode; workflow: Workflow; detail: ExecutionDetail | null; onClose: () => void }) { const state = agentRunState(node, workflow, detail); const step = detail?.steps.find((item) => item.name === node.name); const dependencies = workflow.edges.filter((edge) => edge.to === node.name).map((edge) => edge.from); const downstream = workflow.edges.filter((edge) => edge.from === node.name).map((edge) => edge.to); return <section className="agent-inspector"><div className="section-heading"><span>AGENT DETAIL</span><button onClick={onClose}><X size={15} /></button></div><div className="agent-inspector-title"><span className={`agent-mini-icon ${state}`}><Bot size={18} /></span><div><strong>{node.name}</strong><small>{cleanType(node.type)}</small></div><em>{state}</em></div><dl><div><dt>Latest duration</dt><dd>{formatDuration(step?.durationMs ?? null)}</dd></div><div><dt>Dependencies</dt><dd>{dependencies.join(', ') || 'Entry point'}</dd></div><div><dt>Feeds</dt><dd>{downstream.join(', ') || 'Final Agent'}</dd></div></dl>{step?.error && <div className="agent-error"><AlertTriangle size={15} /><span>{step.error}</span></div>}{step?.output !== undefined && <details><summary>Latest sanitized output</summary><pre>{JSON.stringify(step.output, null, 2)}</pre></details>}</section>; }
-function ApprovalPanel({ enabled, detail, busy, onAction }: { enabled: boolean; detail: ExecutionDetail | null; busy: string; onAction: (action: ApprovalAction) => void }) { return <section className="approval-panel"><div className="section-heading"><span>HUMAN CONTROL</span><ShieldCheck size={15} /></div>{enabled ? <><p>Send a decision for {detail ? `execution #${detail.id}` : 'a selected execution'} through the dedicated n8n approval webhook.</p><div><button onClick={() => onAction('reject')} disabled={!detail || !!busy}>Reject</button><button className="approve" onClick={() => onAction('approve')} disabled={!detail || !!busy}>{busy === 'approve' ? <LoaderCircle size={14} className="spin-icon" /> : <Check size={14} />} Approve</button></div></> : <p>Add an enabled POST webhook named <code>AI Crafters Pro Approval</code> in n8n to enable approve and reject actions.</p>}</section>; }
-function ExecutionDetailPanel({ detail, instanceUrl }: { detail: ExecutionDetail; instanceUrl?: string }) { return <div className="execution-detail"><div className="section-heading"><div><span>EXECUTION #{detail.id}</span><small>{detail.error ? 'Failure diagnosis' : 'Agent trace'}</small></div>{instanceUrl && <a href={`${instanceUrl}/workflow/${encodeURIComponent(detail.workflowId)}/executions/${encodeURIComponent(detail.id)}`} target="_blank" rel="noreferrer">Open in n8n <ExternalLink size={13} /></a>}</div>{detail.error && <div className="execution-error"><AlertTriangle size={17} /><div><strong>{detail.lastNode || 'Workflow error'}</strong><p>{detail.error}</p>{detail.hint && <small>{detail.hint}</small>}</div></div>}<div className="step-trace">{detail.steps.map((step, index) => <div key={`${step.name}-${index}`} className={step.status}><span>{step.status === 'success' ? <Check size={13} /> : <X size={13} />}</span><div><strong>{step.name}</strong><small>{step.status} · {formatDuration(step.durationMs)}</small></div></div>)}</div>{detail.output !== undefined && <details className="run-output"><summary>Final sanitized output</summary><pre>{JSON.stringify(detail.output, null, 2)}</pre></details>}</div>; }

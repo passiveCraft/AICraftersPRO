@@ -128,7 +128,9 @@ export function executionDetail(value: unknown): ExecutionDetail {
   const data = record(value), result = record(record(data.data).resultData), runData = record(result.runData);
   const steps = Object.entries(runData).map(([name, attempts]) => {
     const attempt = record(list(attempts).at(-1)); const issue = record(attempt.error); const main = list(record(attempt.data).main); const items = list(main[0]).map(item => limited(record(item).json));
-    return { name, status: str(issue.message) ? 'error' as const : 'success' as const, durationMs: Number.isFinite(Number(attempt.executionTime)) ? Number(attempt.executionTime) : null, error: str(issue.message) || undefined, hint: str(issue.description) || undefined, output: items.length ? items : undefined };
+    const reported = str(attempt.executionStatus);
+    const status = str(issue.message) || reported === 'error' ? 'error' as const : reported === 'running' ? 'running' as const : reported === 'waiting' ? 'waiting' as const : reported === 'success' || attempt.data !== undefined ? 'success' as const : 'unknown' as const;
+    return { name, status, durationMs: typeof attempt.executionTime === 'number' && Number.isFinite(attempt.executionTime) && attempt.executionTime >= 0 ? attempt.executionTime : null, error: str(issue.message) || undefined, hint: str(issue.description) || undefined, output: items.length ? items : undefined };
   });
   const base = execution(data), topError = record(result.error), finalStep = [...steps].reverse().find(step => step.output);
   return { ...base, lastNode: str(result.lastNodeExecuted) || null, error: str(topError.message) || steps.find(step => step.error)?.error, hint: str(topError.description) || steps.find(step => step.hint)?.hint, steps, output: finalStep?.output };

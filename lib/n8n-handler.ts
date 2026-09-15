@@ -6,6 +6,7 @@ import { buildSystemWorkflow } from './system-workflows.ts';
 export type Bindings = { DB: D1Database; N8N_ENCRYPTION_KEY: string; N8N_DEV_INSTANCE_URL?: string; N8N_DEV_API_KEY?: string };
 type Saved = { instance_url: string; encrypted_key: string; connected_at: string };
 const empty = { connected: false, workflows: { data: [], nextCursor: null }, executions: { data: [], nextCursor: null }, credentials: [] };
+const activeExecutionStatuses = new Set(['running', 'new', 'waiting']);
 const headers = { 'Cache-Control': 'private, no-store', Vary: 'Cookie, oai-authenticated-user-id', 'X-Content-Type-Options': 'nosniff' };
 const siteOrigin = 'https://operator-core-ai-team.tomsinas44.chatgpt.site';
 
@@ -161,6 +162,7 @@ export async function handleN8nRequest(request: Request, bindings: Bindings, fet
         if ((method === 'GET' || method === 'DELETE') && input && typeof input === 'object' && !Array.isArray(input)) {
           for (const [name, value] of Object.entries(input)) if (['string', 'number', 'boolean'].includes(typeof value)) target.searchParams.set(name, String(value));
         }
+        const baseline = new Set(page(await n8nGet(saved.instance_url, key, 'executions', { limit: '20', workflowId: workflowId!, includeData: 'false' }, fetcher), execution).data.map(item => item.id));
         const requestInit: RequestInit = { method, headers: { Accept: 'application/json, text/plain', ...(method === 'GET' || method === 'DELETE' ? {} : { 'Content-Type': 'application/json' }) }, body: method === 'GET' || method === 'DELETE' ? undefined : JSON.stringify(input), redirect: 'manual', signal: AbortSignal.timeout(60000), cache: 'no-store' };
         let response = await fetcher(target, requestInit);
         // n8n can need a brief moment to register a newly published production webhook.
@@ -175,7 +177,19 @@ export async function handleN8nRequest(request: Request, bindings: Bindings, fet
         }
         const resultText = (await response.text()).slice(0, 200_000); let output: unknown = resultText;
         try { output = resultText ? JSON.parse(resultText) : null; } catch { /* Return plain text safely. */ }
-        return Response.json({ status: 'success', output, ...(runnerInstalled ? { runnerInstalled: true } : {}) }, { headers });
+        let run: ReturnType<typeof executionDetail> | undefined;
+        for (let attempt = 0; attempt < 8 && !run; attempt++) {
+          const recent = page(await n8nGet(saved.instance_url, key, 'executions', { limit: '20', workflowId: workflowId!, includeData: 'false' }, fetcher), execution);
+          const candidate = recent.data.find(item => !baseline.has(item.id));
+          if (candidate) {
+            run = executionDetail(await n8nGet(saved.instance_url, key, `executions/${candidate.id}`, { includeData: 'true' }, fetcher));
+            if (activeExecutionStatuses.has(run.status) && attempt < 7) {
+              run = undefined;
+              await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+            }
+          } else if (attempt < 7) await new Promise(resolve => setTimeout(resolve, 250 * (attempt + 1)));
+        }
+        return Response.json({ status: run?.status === 'error' ? 'error' : 'success', output, ...(run ? { execution: run } : {}), ...(runnerInstalled ? { runnerInstalled: true } : {}) }, { headers });
       }
       if (request.method !== 'POST' && request.method !== 'PUT') throw new ConnectionError('Unsupported request method.', 405);
       const draft = await readDraft(request);

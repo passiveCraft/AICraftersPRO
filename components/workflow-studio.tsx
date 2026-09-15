@@ -5,7 +5,7 @@ import { ArrowLeft, Bot, Box, Braces, Check, ChevronDown, ChevronRight, ChevronU
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import type { Workflow, WorkflowDraft, WorkflowNode } from '@/lib/n8n-types';
+import type { ExecutionDetail, Workflow, WorkflowDraft, WorkflowNode } from '@/lib/n8n-types';
 
 type Props = { workflow: Workflow | null; instanceUrl?: string; onClose: () => void; onChanged: () => Promise<void> | void };
 type LibraryItem = { label: string; type: string; version: number; icon: typeof Webhook; description: string; parameters: Record<string, unknown> };
@@ -168,9 +168,18 @@ export function WorkflowStudio({ workflow: initial, instanceUrl, onClose, onChan
     setRunLog(items => [`${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${hasWebhookTrigger ? workflow.active ? 'run started' : 'publishing webhook and starting run' : 'preparing dashboard runner and starting run'} · ${workflow.name}`, ...items].slice(0, 8));
     try {
       const input = JSON.parse(testInput);
-      const result = await api<{ status: string; output: unknown }>(`?operation=trigger&workflowId=${encodeURIComponent(workflow.id)}`, { method: 'POST', body: JSON.stringify(input) });
+      const result = await api<{ status: string; output: unknown; execution?: ExecutionDetail }>(`?operation=trigger&workflowId=${encodeURIComponent(workflow.id)}`, { method: 'POST', body: JSON.stringify(input) });
       const output = typeof result.output === 'string' ? result.output : JSON.stringify(result.output);
-      setRunLog(items => [`${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · success · ${output?.slice(0, 140) || 'workflow completed'}`, ...items].slice(0, 8));
+      const finishedAt = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const executionLines = result.execution ? [
+        `${finishedAt} · execution ${result.execution.id} · ${result.execution.status}`,
+        ...result.execution.steps.flatMap(step => [
+          `${finishedAt} · ${step.status} · ${step.name}${step.durationMs === null ? '' : ` · ${step.durationMs}ms`}`,
+          ...(step.error ? [`${finishedAt} · error · ${step.error}`] : []),
+          ...(step.output === undefined ? [] : [`${finishedAt} · output · ${JSON.stringify(step.output).slice(0, 140)}`]),
+        ]),
+      ] : [];
+      setRunLog(items => [...executionLines, `${finishedAt} · ${result.execution?.status === 'error' ? 'failed' : 'success'} · ${output?.slice(0, 140) || 'workflow completed'}`, ...items].slice(0, 8));
       const refreshed = await api<Workflow>(`?workflowId=${encodeURIComponent(workflow.id)}`);
       setWorkflow(refreshed); setMessage('Workflow execution completed'); await onChanged();
     }

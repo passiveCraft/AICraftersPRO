@@ -15,7 +15,7 @@ export type Workflow = {
 };
 export type WorkflowDraft = Pick<Workflow, 'name' | 'nodes' | 'edges'> & { settings?: Record<string, unknown> };
 export type Execution = { id: string; workflowId: string; status: string; mode: string; startedAt: string | null; stoppedAt: string | null; };
-export type ExecutionStep = { name: string; status: 'success' | 'error'; durationMs: number | null; error?: string; hint?: string; output?: unknown };
+export type ExecutionStep = { name: string; status: 'success' | 'error' | 'running' | 'waiting' | 'unknown'; durationMs: number | null; error?: string; hint?: string; output?: unknown };
 export type ExecutionDetail = Execution & { lastNode: string | null; error?: string; hint?: string; steps: ExecutionStep[]; output?: unknown };
 export type Credential = { id: string; name: string; type: string; };
 export type Page<T> = { data: T[]; nextCursor: string | null };

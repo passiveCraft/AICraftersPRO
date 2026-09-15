@@ -81,6 +81,13 @@ test('executions return metadata only and invalid API shapes fail closed', () =>
   assert.throws(() => page({ results: [] }, workflow));
   assert.throws(() => workflow({ title: 'Not n8n' }));
 });
+test('execution details do not call unreported attempts successful', () => {
+  const result=executionDetail({id:'e',workflowId:'w',status:'running',data:{resultData:{runData:{Pending:[{}],Active:[{executionStatus:'running'}]}}}});
+  assert.equal(result.steps[0].status,'unknown');
+  assert.equal(result.steps[0].durationMs,null);
+  assert.equal(result.steps[1].status,'running');
+});
+
 test('execution details retain safe output for every n8n node in the run session', () => {
   const result = executionDetail({ id: 'e-2', workflowId: 'w-1', status: 'success', data: { resultData: { lastNodeExecuted: 'Return', runData: {
     Receive: [{ executionTime: 2, data: { main: [[{ json: { prompt: 'hello' } }]] } }],

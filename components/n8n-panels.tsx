@@ -16,6 +16,20 @@ export async function n8nClientRequest<T>(path = '', init?: RequestInit): Promis
   if (!response.ok) throw new Error(body && typeof body === 'object' && 'error' in body && typeof body.error === 'string' ? body.error : 'Could not complete the n8n request.');
   return body as T;
 }
+async function readCompleteSnapshot(): Promise<Snapshot> {
+  const snapshot = await n8nClientRequest<Snapshot>();
+  const seen = new Set<string>();
+  const workflows = new Map(snapshot.workflows.data.map(workflow => [workflow.id, workflow]));
+  while (snapshot.workflows.nextCursor) {
+    const cursor = snapshot.workflows.nextCursor;
+    if (seen.has(cursor)) throw new Error('n8n returned a repeated workflow cursor. Mapping could not be verified.');
+    seen.add(cursor);
+    const next = await n8nClientRequest<Page<Workflow>>(`?resource=workflows&cursor=${encodeURIComponent(cursor)}`);
+    next.data.forEach(workflow => workflows.set(workflow.id, workflow));
+    snapshot.workflows = { data: [...workflows.values()], nextCursor: next.nextCursor };
+  }
+  return snapshot;
+}
 export function useN8n() {
   const [data, setData] = useState<Snapshot>(empty);
   const [busy, setBusy] = useState('loading');
@@ -28,23 +42,27 @@ export function useN8n() {
     const current = ++generation.current;
     setBusy('sync');
     try {
-      const next = await n8nClientRequest<Snapshot>();
+      const next = await readCompleteSnapshot();
       if (generation.current === current) { setData(next); setError(''); }
     } catch (issue) { if (generation.current === current) setError(issue instanceof Error ? issue.message : 'Connection failed.'); }
     finally { inFlight.current = false; if (generation.current === current) setBusy(''); }
   }, []);
   useEffect(() => {
     let canceled = false;
-    void n8nClientRequest<Snapshot>().then(next => { if (!canceled) { setData(next); setError(''); } }).catch(issue => { if (!canceled) setError(issue instanceof Error ? issue.message : 'Connection failed.'); }).finally(() => { if (!canceled) { inFlight.current = false; setBusy(''); } });
+    void readCompleteSnapshot().then(next => { if (!canceled) { setData(next); setError(''); } }).catch(issue => { if (!canceled) setError(issue instanceof Error ? issue.message : 'Connection failed.'); }).finally(() => { if (!canceled) { inFlight.current = false; setBusy(''); } });
     return () => { canceled = true; };
   }, []);
+  useEffect(() => {
+    const interval = window.setInterval(() => { if (!document.hidden) void refresh(); }, 30_000);
+    return () => window.clearInterval(interval);
+  }, [refresh]);
   async function connect(instanceUrl: string, apiKey: string) {
     if (inFlight.current) return false;
     inFlight.current = true;
     const current = ++generation.current; setBusy('connect'); setError('');
     try {
       const next = await n8nClientRequest<Snapshot>('', { method: 'POST', body: JSON.stringify({ instanceUrl, apiKey }) });
-      if (current === generation.current) setData(next);
+      if (current === generation.current) setData(next.workflows.nextCursor ? await readCompleteSnapshot() : next);
       return true;
     } catch (issue) { if (current === generation.current) setError(issue instanceof Error ? issue.message : 'Connection failed.'); return false; }
     finally { inFlight.current = false; if (current === generation.current) setBusy(''); }
