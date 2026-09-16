@@ -3,11 +3,11 @@
 import Image from 'next/image';
 
 /** Ambient identity animation, never an execution indicator. */
-export function HudCore({ connected }: { connected: number }) {
+export function HudCore({ connected, empty = false }: { connected: number; empty?: boolean }) {
   return (
     <div
       className="hud-core"
-      aria-label={`AI Crafters Pro, ${connected} connected Systems`}
+      aria-label={empty ? 'AI Crafters Pro system design space' : `AI Crafters Pro, ${connected} workflows on the map`}
     >
       <svg viewBox="0 0 360 360" aria-hidden="true">
         <circle className="core-track" cx="180" cy="180" r="174" />
@@ -30,7 +30,7 @@ export function HudCore({ connected }: { connected: number }) {
           alt="AI Crafters Pro"
           priority
         />
-        <span>{connected} / 10 connected</span>
+        <span>{empty ? 'System design mode' : `${connected} on map`}</span>
       </div>
     </div>
   );

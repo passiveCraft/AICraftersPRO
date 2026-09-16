@@ -1,10 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUpRight, Check, ChevronRight, CircleAlert, Eye, EyeOff, Link2, LoaderCircle, RefreshCw, Search, Unplug, X } from 'lucide-react';
+import { ArrowUpRight, Check, ChevronRight, CircleAlert, Eye, EyeOff, KeyRound, Link2, LoaderCircle, Plus, RefreshCw, Search, Unplug, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import type { Execution, ExecutionDetail, Page, Snapshot, Workflow } from '@/lib/n8n-types';
+import type { Credential, Execution, ExecutionDetail, Page, Snapshot, Workflow } from '@/lib/n8n-types';
 
 const empty: Snapshot = { connected: false, workflows: { data: [], nextCursor: null }, executions: { data: [], nextCursor: null }, credentials: [] };
 export async function n8nClientRequest<T>(path = '', init?: RequestInit): Promise<T> {
@@ -91,7 +91,18 @@ export function useN8n() {
     } catch (issue) { if (current === generation.current) setError(issue instanceof Error ? issue.message : 'Could not load the next page.'); }
     finally { inFlight.current = false; if (current === generation.current) setBusy(''); }
   }
-  return { data, busy, error, refresh, connect, disconnect, loadMore };
+  async function provision(systemName: string) {
+    if (inFlight.current) return false;
+    inFlight.current = true;
+    const current = ++generation.current; setBusy('provision'); setError('');
+    try {
+      await n8nClientRequest(`?operation=provision&systemName=${encodeURIComponent(systemName)}`, { method: 'POST', body: '{}' });
+      if (current === generation.current) setData(await readCompleteSnapshot());
+      return true;
+    } catch (issue) { if (current === generation.current) setError(issue instanceof Error ? issue.message : 'Could not build the System.'); return false; }
+    finally { inFlight.current = false; if (current === generation.current) setBusy(''); }
+  }
+  return { data, busy, error, refresh, connect, disconnect, loadMore, provision };
 }
 export type N8nState = ReturnType<typeof useN8n>;
 function date(value?: string | null) { if (!value) return 'Not available'; const parsed = new Date(value); return Number.isNaN(parsed.getTime()) ? 'Not available' : parsed.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); }
@@ -120,6 +131,27 @@ export function ConnectionPanel({ state }: { state: N8nState }) {
       <Button className="connect-submit" type="submit" disabled={!!busy}>{busy === 'connect' ? <LoaderCircle size={17} className="spin-icon" /> : <Link2 size={17} />}{busy === 'connect' ? 'Verifying and connecting…' : 'Connect n8n'}</Button>
       {editing && <Button type="button" variant="ghost" disabled={!!busy} onClick={() => { setEditing(false); setKey(''); }}>Cancel</Button>}
     </form>}
+  </div>;
+}
+
+function readableCredentialType(type: string) {
+  return type.replace(/^n8n-nodes-base\./, '').replace(/^@n8n\/n8n-nodes-langchain\./, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[._-]/g, ' ');
+}
+
+function CredentialRow({ credential }: { credential: Credential }) {
+  return <div className="credential-row"><span className="credential-icon"><KeyRound size={17} /></span><div><strong>{credential.name || 'Unnamed credential'}</strong><small>{readableCredentialType(credential.type)}</small></div></div>;
+}
+
+export function CredentialsPanel({ state, onConnect }: { state: N8nState; onConnect: () => void }) {
+  const { data, busy, error } = state;
+  if (!data.connected) return <div className="credentials-panel credentials-empty"><span className="credentials-empty-icon"><KeyRound size={25} /></span><h2>Connect n8n to view credentials</h2><p>Credentials live in your n8n account. Connect it here to see which accounts are ready to use.</p><Button variant="outline" onClick={onConnect}>Connect n8n <ArrowUpRight size={15} /></Button></div>;
+  const credentialsUrl = `${data.instanceUrl}/credentials`;
+  return <div className="credentials-panel">
+    {error && <p className="integration-error" role="alert">{error}</p>}
+    <div className="credentials-toolbar"><span>{data.credentials.length} credential{data.credentials.length === 1 ? '' : 's'}</span><button aria-label="Refresh credentials" disabled={!!busy} onClick={() => void state.refresh()}><RefreshCw size={16} className={busy === 'sync' ? 'spin-icon' : ''} /></button></div>
+    {data.credentialError ? <p className="integration-note">{data.credentialError}</p> : data.credentials.length ? <div className="credential-list">{data.credentials.map(credential => <CredentialRow credential={credential} key={credential.id} />)}</div> : <div className="credentials-empty"><span className="credentials-empty-icon"><KeyRound size={25} /></span><h2>No credentials yet</h2><p>Create a credential in n8n to connect an app, AI provider, or service to your workflows. Secret values stay in n8n and never appear here.</p></div>}
+    <div className="credential-actions"><a className="ghost-action" href={credentialsUrl} target="_blank" rel="noreferrer">Open credentials <ArrowUpRight size={15} /></a><a className="primary-action" href={`${credentialsUrl}/new`} target="_blank" rel="noreferrer"><Plus size={16} /> Create credential</a></div>
+    <p className="integration-note">New credentials are created and managed in n8n. Refresh this panel after saving one there.</p>
   </div>;
 }
 

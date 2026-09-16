@@ -131,3 +131,17 @@ test('unauthenticated and cross-site mutations fail before any upstream request'
   assert.equal((await handleN8nRequest(f.request('a', 'DELETE', undefined, '', 'https://elsewhere.test'), f.bindings, f.fetcher)).status, 403);
   assert.equal(f.seen.length, 0);
 });
+
+test('hosted identity email can identify the connection when user id is not forwarded', async () => {
+  const f = fixture();
+  const request = new Request('https://dashboard.test/api/n8n', {
+    headers: {
+      'oai-authenticated-user-email': 'Owner@Example.com',
+      Origin: 'https://dashboard.test',
+      'Content-Type': 'application/json',
+    },
+  });
+  const response = await handleN8nRequest(request, f.bindings, f.fetcher);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).connected, false);
+});

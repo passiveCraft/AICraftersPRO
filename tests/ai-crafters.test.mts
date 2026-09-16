@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  AI_CRAFTERS_SYSTEMS,
   agentRunState,
   mapSystems,
   systemMetrics,
@@ -101,18 +102,16 @@ function workflow(id: string, name: string): Workflow {
   };
 }
 
-test('maps exact workflow names, locks missing slots and rejects duplicate matches', () => {
+test('maps only exact workflow names that exist in n8n and rejects duplicate matches', () => {
   const result = mapSystems([
     workflow('one', 'Product & Market Intelligence'),
     workflow('two', 'Store & Conversion'),
     workflow('duplicate', 'Store & Conversion'),
     workflow('other', 'Unrelated Workflow'),
   ]);
-  assert.equal(result.length, 10);
+  assert.equal(result.length, 2);
   assert.equal(result[0].workflow?.id, 'one');
-  assert.equal(result[1].workflow, null);
   assert.deepEqual(result[1].duplicateIds, ['two', 'duplicate']);
-  assert.equal(result[9].workflow, null);
   assert.deepEqual(
     unmatchedWorkflows([workflow('other', 'Unrelated Workflow')]).map(
       (item) => item.id,
@@ -206,7 +205,7 @@ test('derives Agent state from real node execution details and topology', () => 
 });
 
 test('builds each ecommerce System with a runnable intake, Gemini Agent and explicit approval webhook', () => {
-  const system = mapSystems([])[0];
+  const system = AI_CRAFTERS_SYSTEMS[0];
   const draft = buildSystemWorkflow(system, {
     id: 'cred-1',
     name: 'Gemini',

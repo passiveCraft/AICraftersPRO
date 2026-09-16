@@ -6,7 +6,6 @@ import {
   Check,
   ChevronRight,
   LoaderCircle,
-  ShieldCheck,
   X,
   Clock3,
   ExternalLink,
@@ -14,8 +13,10 @@ import {
   Globe2,
   GitBranch,
   Box,
+  Pencil,
 } from 'lucide-react';
 import { agentRunState, type AgentRunState } from '@/lib/ai-crafters';
+import { ExecutionDataView } from './execution-data-view';
 import type {
   ApprovalAction,
   ExecutionDetail,
@@ -111,11 +112,13 @@ export function AgentInspector({
   workflow,
   detail,
   onClose,
+  onEdit,
 }: {
   node: WorkflowNode;
   workflow: Workflow;
   detail: ExecutionDetail | null;
   onClose: () => void;
+  onEdit: () => void;
 }) {
   const state = agentRunState(node, workflow, detail);
   const step = detail?.steps.find((item) => item.name === node.name);
@@ -157,6 +160,9 @@ export function AgentInspector({
           <dd>{downstream.join(', ') || 'Final Agent'}</dd>
         </div>
       </dl>
+      <button className="agent-edit-action" onClick={onEdit}>
+        <Pencil size={15} /> Edit this agent in workflow studio
+      </button>
       {step?.error && (
         <div className="agent-error">
           <AlertTriangle size={15} />
@@ -183,47 +189,35 @@ export function ApprovalPanel({
   busy: string;
   onAction: (action: ApprovalAction) => void;
 }) {
+  // Approval controls are available only when this workflow exposes the
+  // dedicated, enabled POST webhook. Do not reserve sidebar space otherwise.
+  if (!enabled) return null;
+
   return (
     <section className="approval-panel">
-      <div className="section-heading">
-        <span>HUMAN CONTROL</span>
-        <ShieldCheck size={15} />
+      <p>
+        Send a decision for {detail ? `execution #${detail.id}` : 'a selected execution'} through the dedicated n8n approval webhook.
+      </p>
+      <div>
+        <button
+          onClick={() => onAction('reject')}
+          disabled={!detail || !!busy}
+        >
+          Reject
+        </button>
+        <button
+          className="approve"
+          onClick={() => onAction('approve')}
+          disabled={!detail || !!busy}
+        >
+          {busy === 'approve' ? (
+            <LoaderCircle size={14} className="spin-icon" />
+          ) : (
+            <Check size={14} />
+          )}{' '}
+          Approve
+        </button>
       </div>
-      {enabled ? (
-        <>
-          <p>
-            Send a decision for{' '}
-            {detail ? `execution #${detail.id}` : 'a selected execution'}{' '}
-            through the dedicated n8n approval webhook.
-          </p>
-          <div>
-            <button
-              onClick={() => onAction('reject')}
-              disabled={!detail || !!busy}
-            >
-              Reject
-            </button>
-            <button
-              className="approve"
-              onClick={() => onAction('approve')}
-              disabled={!detail || !!busy}
-            >
-              {busy === 'approve' ? (
-                <LoaderCircle size={14} className="spin-icon" />
-              ) : (
-                <Check size={14} />
-              )}{' '}
-              Approve
-            </button>
-          </div>
-        </>
-      ) : (
-        <p>
-          Add an enabled POST webhook named{' '}
-          <code>AI Crafters Pro Approval</code> in n8n to enable approve and
-          reject actions.
-        </p>
-      )}
     </section>
   );
 }
@@ -282,12 +276,7 @@ export function ExecutionDetailPanel({
           </div>
         ))}
       </div>
-      {detail.output !== undefined && (
-        <details className="run-output">
-          <summary>Final sanitized output</summary>
-          <pre>{JSON.stringify(detail.output, null, 2)}</pre>
-        </details>
-      )}
+      <ExecutionDataView detail={detail} />
     </div>
   );
 }

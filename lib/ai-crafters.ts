@@ -30,7 +30,7 @@ export type MappedSystem = SystemDefinition & {
 };
 
 export function mapSystems(workflows: Workflow[]): MappedSystem[] {
-  return AI_CRAFTERS_SYSTEMS.map((definition) => {
+  const mapped = AI_CRAFTERS_SYSTEMS.map((definition) => {
     const matches = workflows.filter(
       (workflow) => workflow.name === definition.name && !workflow.archived,
     );
@@ -41,6 +41,10 @@ export function mapSystems(workflows: Workflow[]): MappedSystem[] {
         matches.length > 1 ? matches.map((workflow) => workflow.id) : [],
     };
   });
+  // n8n is the source of truth for what exists. Keep the catalog above for
+  // stable labels, layout metadata, and provisioning definitions, but do not
+  // render missing catalog entries as fake/locked Systems.
+  return mapped.filter((system) => system.workflow || system.duplicateIds.length);
 }
 
 export function unmatchedWorkflows(workflows: Workflow[]): Workflow[] {

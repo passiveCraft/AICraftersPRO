@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="AI Crafters Pro">
+  <rect width="64" height="64" rx="14" fill="#4100B6"/>
+  <path fill="#fff" d="M32 11 12 53h11l3.5-8h10.9l3.5 8h11L32 11Zm0 15.2 4 10.1h-8l4-10.1Z"/>
+  <path fill="#BBA5FF" d="M43.5 11H53v9.5h-9.5z"/>
+</svg>

@@ -2,8 +2,8 @@
 /* The custom pan/zoom canvas is keyboard-operated; its Agent buttons remain native controls. */
 /* eslint-disable jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Minus, Plus, Scan, Search } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Bot, Map, Maximize2, Minimize2, Minus, Plus } from 'lucide-react';
 import { agentRunState } from '@/lib/ai-crafters';
 import { layoutAgents } from '@/lib/agent-layout';
 import type { Workflow, WorkflowNode, ExecutionDetail } from '@/lib/n8n-types';
@@ -12,11 +12,15 @@ export function AgentGraph({
   workflow,
   detail,
   selected,
+  touring = false,
+  onStartTour,
   onSelect,
 }: {
   workflow: Workflow;
   detail: ExecutionDetail | null;
   selected: WorkflowNode | null;
+  touring?: boolean;
+  onStartTour: () => void;
   onSelect: (node: WorkflowNode) => void;
 }) {
   const layout = useMemo(() => layoutAgents(workflow), [workflow]);
@@ -27,7 +31,7 @@ export function AgentGraph({
   const [size, setSize] = useState({ width: 800, height: 560 });
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [query, setQuery] = useState('');
+  const [fullScreen, setFullScreen] = useState(false);
   useEffect(() => {
     const element = host.current;
     if (!element) return;
@@ -40,6 +44,43 @@ export function AgentGraph({
     observer.observe(element);
     return () => observer.disconnect();
   }, []);
+  useEffect(() => {
+    if (!fullScreen) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousDocumentOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = 'hidden';
+    document.documentElement.style.overflow = 'hidden';
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setFullScreen(false);
+    };
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousDocumentOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [fullScreen]);
+  useLayoutEffect(() => {
+    if (!fullScreen) return;
+    let secondFrame = 0;
+    const measureAndCenter = () => {
+      const rect = host.current?.getBoundingClientRect();
+      if (!rect || !rect.width || !rect.height) return;
+      // Fixed positioning changes the canvas dimensions after the surrounding
+      // page has scrolled. Measure the real viewport canvas instead of reusing
+      // its former inline height.
+      setSize({ width: rect.width, height: rect.height });
+      setPan({ x: 0, y: 0 });
+    };
+    const firstFrame = window.requestAnimationFrame(() => {
+      measureAndCenter();
+      secondFrame = window.requestAnimationFrame(measureAndCenter);
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      window.cancelAnimationFrame(secondFrame);
+    };
+  }, [fullScreen]);
   const scale =
     Math.min(size.width / layout.width, size.height / layout.height, 1) * zoom;
   const related = new Set(
@@ -52,24 +93,13 @@ export function AgentGraph({
         ]
       : [],
   );
-  const matches = workflow.nodes.filter((n) =>
-    `${n.name} ${n.type}`.toLowerCase().includes(query.toLowerCase()),
-  );
   return (
     <section
-      className="agent-network"
+      className={`agent-network ${fullScreen ? 'is-fullscreen' : ''}`}
       aria-label="Real workflow Agent topology"
     >
       <div className="graph-controls">
-        <label className="hud-search">
-          <Search size={17} />
-          <input
-            aria-label="Find an Agent"
-            placeholder="Find an Agent"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </label>
+        <span className="graph-title"></span>
         <div>
           <button
             aria-label="Zoom out"
@@ -85,13 +115,20 @@ export function AgentGraph({
             <Plus size={18} />
           </button>
           <button
-            aria-label="Fit graph"
+            aria-label={fullScreen ? 'Exit full-screen agent canvas' : 'Show agent canvas full screen'}
+            title={fullScreen ? 'Exit full screen' : 'Full-screen agent canvas'}
             onClick={() => {
-              setZoom(1);
+              // A full-screen canvas should always open on the complete graph,
+              // even if the operator previously panned or zoomed the inline view.
               setPan({ x: 0, y: 0 });
+              setZoom(1);
+              setFullScreen((open) => !open);
             }}
           >
-            <Scan size={18} />
+            {fullScreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+          </button>
+          <button aria-label="Start guided tour" title="Start guided tour" onClick={onStartTour}>
+            <Map size={18} />
           </button>
         </div>
       </div>
@@ -131,6 +168,10 @@ export function AgentGraph({
         }}
         onPointerCancel={() => {
           drag.current = null;
+        }}
+        onWheel={(event) => {
+          event.preventDefault();
+          setZoom((value) => Math.max(0.4, Math.min(3, value - event.deltaY * .001)));
         }}
       >
         <div
@@ -176,7 +217,8 @@ export function AgentGraph({
             return (
               <button
                 key={node.id}
-                className={`agent-control ${state} ${selected?.id === node.id ? 'selected' : ''} ${!matches.includes(node) || (selected && !related.has(node.name)) ? 'dimmed' : ''}`}
+                data-agent-id={node.id}
+                className={`agent-control ${state} ${selected?.id === node.id ? `selected ${touring ? 'tour-spotlight' : ''}` : ''} ${selected && !related.has(node.name) ? 'dimmed' : ''}`}
                 style={{ left: p.x, top: p.y }}
                 onClick={() => onSelect(node)}
                 aria-pressed={selected?.id === node.id}
@@ -195,19 +237,6 @@ export function AgentGraph({
         {!workflow.nodes.length && (
           <p className="graph-empty">No Agents in this workflow.</p>
         )}
-      </div>
-      <div className="agent-access-list" aria-label="Agent navigation">
-        {matches.map((node) => (
-          <button
-            key={node.id}
-            aria-pressed={selected?.id === node.id}
-            onClick={() => onSelect(node)}
-          >
-            <Bot size={17} />
-            <span>{node.name}</span>
-            <small>{agentRunState(node, workflow, detail)}</small>
-          </button>
-        ))}
       </div>
       <p className="graph-note">
         n8n topology · select an Agent to inspect dependencies and output
