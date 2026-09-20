@@ -4,6 +4,14 @@ AI Crafters Pro is the community operations interface for AI-powered workflows. 
 
 The application is designed to make automation approachable without hiding the real workflow behind it: n8n remains the source of truth for workflows, credentials, and execution history.
 
+## Responsive dashboard layout
+
+The operating map remains a full-width canvas when it is displayed beside a host sidebar. It only changes to the compact, stacked system list on tablet and phone widths, so the central map keeps its visual hierarchy in embedded previews.
+
+| Wide dashboard | Sidebar-sized dashboard |
+| --- | --- |
+| ![Wide dashboard operating map](./public/screenshots/dashboard-wide.png) | ![Operating map at a sidebar-sized viewport](./public/screenshots/dashboard-sidebar.png) |
+
 ## What members can do
 
 - **Connect a workspace** — add an n8n Cloud or publicly reachable self-hosted instance using an n8n API key.
