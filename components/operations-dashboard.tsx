@@ -15,7 +15,9 @@ const hiddenWorkflowStorageKey = 'acp-hidden-workflows';
 
 export function OperationsDashboard() {
   const n8n = useN8n();
-  const [execution, setExecution] = useState<string | null>(null);
+  const [execution, setExecution] = useState<string | null>(() => (
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('execution')
+  ));
   const [theme, setTheme] = useState<'dark' | 'light'>('dark');
   const [connection, setConnection] = useState(false);
   const [credentials, setCredentials] = useState(false);
@@ -23,6 +25,11 @@ export function OperationsDashboard() {
   const [workflow, setWorkflow] = useState<Workflow | null>(null);
   const [editingWorkflow, setEditingWorkflow] = useState<Workflow | null>(null);
   const [hiddenWorkflowIds, setHiddenWorkflowIds] = useState<string[]>([]);
+
+  const allWorkflows = n8n.data.workflows.data.filter((item) => !item.archived);
+  const hiddenSet = new Set(hiddenWorkflowIds);
+  const mapWorkflows = allWorkflows.filter((item) => !hiddenSet.has(item.id));
+  const hiddenWorkflows = allWorkflows.filter((item) => hiddenSet.has(item.id));
 
   useEffect(() => {
     try {
@@ -33,6 +40,51 @@ export function OperationsDashboard() {
       if (Array.isArray(savedHidden)) setHiddenWorkflowIds(savedHidden.filter((id): id is string => typeof id === 'string'));
     } catch {}
   }, []);
+
+  useEffect(() => {
+    function syncFromLocation() {
+      const params = new URLSearchParams(window.location.search);
+      const systemId = params.get('system');
+      setExecution(params.get('execution'));
+      if (!systemId) {
+        setWorkflow(null);
+        return;
+      }
+      const selected = allWorkflows.find((item) => item.id === systemId);
+      if (selected) setWorkflow(selected);
+    }
+    window.addEventListener('popstate', syncFromLocation);
+    syncFromLocation();
+    return () => window.removeEventListener('popstate', syncFromLocation);
+  }, [n8n.data.workflows.data]);
+
+  useEffect(() => {
+    const systemId = new URLSearchParams(window.location.search).get('system');
+    if (!systemId) return;
+    const selected = allWorkflows.find((item) => item.id === systemId);
+    if (selected) {
+      setWorkflow(selected);
+      return;
+    }
+    // Do not discard a deep link while the initial n8n snapshot is still loading.
+    if (n8n.busy || n8n.error) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete('system');
+    url.searchParams.delete('execution');
+    history.replaceState({}, '', url);
+    setExecution(null);
+    setWorkflow(null);
+  }, [n8n.data.workflows.data, n8n.busy, n8n.error]);
+
+  function setSelectedWorkflow(item: Workflow | null, replace = false) {
+    const url = new URL(location.href);
+    if (item) url.searchParams.set('system', item.id);
+    else url.searchParams.delete('system');
+    if (!item) url.searchParams.delete('execution');
+    history[replace ? 'replaceState' : 'pushState']({}, '', url);
+    setWorkflow(item);
+    if (!item) setExecution(null);
+  }
 
   function setSelectedExecution(id: string | null, replace = false) {
     const url = new URL(location.href);
@@ -48,23 +100,15 @@ export function OperationsDashboard() {
       try { localStorage.setItem(hiddenWorkflowStorageKey, JSON.stringify(next)); } catch {}
       return next;
     });
-    if (hidden && workflow?.id === item.id) {
-      setWorkflow(null);
-      setSelectedExecution(null, true);
-    }
+    if (hidden && workflow?.id === item.id) setSelectedWorkflow(null, true);
   }
-
-  const allWorkflows = n8n.data.workflows.data.filter((item) => !item.archived);
-  const hiddenSet = new Set(hiddenWorkflowIds);
-  const mapWorkflows = allWorkflows.filter((item) => !hiddenSet.has(item.id));
-  const hiddenWorkflows = allWorkflows.filter((item) => hiddenSet.has(item.id));
 
   if (editingWorkflow) return <WorkflowStudio workflow={editingWorkflow} instanceUrl={n8n.data.instanceUrl} onClose={() => setEditingWorkflow(null)} onChanged={async () => { setEditingWorkflow(null); await n8n.refresh(); }} />;
 
   return (
     <main className={`hud-shell ${workflow ? 'system-detail-shell' : ''}`}>
       {!workflow && <header className="hud-header">
-        <Link href="?" onClick={(event) => { event.preventDefault(); setWorkflow(null); setSelectedExecution(null); }}>
+        <Link href="/" onClick={(event) => { event.preventDefault(); setSelectedWorkflow(null); }}>
           <span className="brand-lockup"><Image src="/ai-crafters-pro-logo.png" alt="AI Crafters Pro" width={161} height={40} priority /><span className="light-brand" aria-hidden="true"><strong>AI Crafters</strong><span>PRO</span></span></span>
         </Link>
         <div className="header-location"><label className="hud-search"><Search size={17} /><input aria-label="Search systems" placeholder="Find a system" value={query} onChange={(event) => setQuery(event.target.value)} /></label></div>
@@ -76,8 +120,8 @@ export function OperationsDashboard() {
         </div>
       </header>}
       {n8n.error && <p className="hud-alert" role="alert">{n8n.error}</p>}
-      {workflow ? <SystemView key={workflow.id} workflow={workflow} credentials={n8n.data.credentials} n8n={n8n} executionId={execution} onSelectExecution={setSelectedExecution} onBack={() => { setWorkflow(null); setSelectedExecution(null); }} onEditWorkflow={setEditingWorkflow} onHideFromMap={(item) => setWorkflowHidden(item, true)} /> : <>
-        <SystemMap workflows={mapWorkflows} executions={n8n.data.executions.data} connected={n8n.data.connected} historyError={n8n.data.executionError} query={query} onSelectWorkflow={setWorkflow} />
+      {workflow ? <SystemView key={workflow.id} workflow={workflow} credentials={n8n.data.credentials} n8n={n8n} executionId={execution} onSelectExecution={setSelectedExecution} onBack={() => setSelectedWorkflow(null)} onEditWorkflow={setEditingWorkflow} onHideFromMap={(item) => setWorkflowHidden(item, true)} /> : <>
+        <SystemMap workflows={mapWorkflows} executions={n8n.data.executions.data} connected={n8n.data.connected} historyError={n8n.data.executionError} query={query} onSelectWorkflow={setSelectedWorkflow} />
         <footer className="activity-dock"><div><strong>{mapWorkflows.filter((item) => item.active).length}<small>/ {mapWorkflows.length}</small></strong><span>Active systems</span></div><div><strong>{n8n.data.executionError ? '—' : n8n.data.executions.data.filter((run) => ['running', 'new', 'waiting'].includes(run.status)).length}</strong><span>Running · loaded window</span></div><div><strong>{n8n.data.executionError ? '—' : n8n.data.executions.data.length}</strong><span>System runs loaded</span></div><div className="dock-note">{n8n.data.executionError ? 'History unavailable' : n8n.data.syncedAt ? `Updated ${new Date(n8n.data.syncedAt).toLocaleTimeString()}` : 'Awaiting connection'}</div></footer>
         <section className="hidden-workflows" aria-label="Hidden systems"><div className="hidden-workflows-heading"><div><span className="eyebrow">MAP VISIBILITY</span><h2>Hidden systems</h2></div><span>{hiddenWorkflows.length} hidden</span></div>{hiddenWorkflows.length ? <div className="hidden-workflow-list">{hiddenWorkflows.map((item) => <div className="hidden-workflow-row" key={item.id}><WorkflowIcon size={17} /><div><strong>{item.name}</strong><small>{item.active ? 'Active' : 'Paused'} · {item.nodes.length} steps</small></div><button className="ghost-action" onClick={() => setWorkflowHidden(item, false)}><Eye size={15} /> Show on map</button></div>)}</div> : <p>No systems are hidden from the map.</p>}</section>
       </>}
