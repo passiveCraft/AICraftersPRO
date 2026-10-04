@@ -33,7 +33,7 @@ export function SystemMap({ workflows, executions, connected, historyError, quer
   const visible = workflows.filter((workflow) => workflow.name.toLowerCase().includes(query.toLowerCase()));
 
   return (
-    <section className="command-map" aria-label="n8n system map">
+    <section className={`command-map ${focused ? 'has-focused-satellite' : ''}`} aria-label="n8n system map">
       <svg className="membership-paths" viewBox="0 0 1000 720" preserveAspectRatio="none" aria-hidden="true">
         {visible.map((workflow, index) => {
           const { x, y } = positionFor(index, visible.length);

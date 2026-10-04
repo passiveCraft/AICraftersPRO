@@ -424,6 +424,7 @@ summary:focus-visible,
 }
 .satellite {
   position: absolute;
+  z-index: 1;
   transform: translate(-50%, -50%);
   width: 22%;
   max-width: 300px;
@@ -440,6 +441,13 @@ summary:focus-visible,
     background 0.25s,
     box-shadow 0.25s;
   min-height: 100px;
+  transition:
+    opacity 0.18s ease,
+    visibility 0.18s ease,
+    border-color 0.25s,
+    background 0.25s,
+    box-shadow 0.25s,
+    transform 0.25s;
 }
 .satellite-orb {
   flex: none;
@@ -480,9 +488,16 @@ summary:focus-visible,
   line-height: 1.35;
 }
 .satellite.focused {
+  z-index: 20;
+  transform: translate(-50%, -50%) scale(1.04);
   border-color: #73dbe36b;
   background: #18263b;
   box-shadow: 0 0 28px #70d3f21c;
+}
+.command-map.has-focused-satellite > .satellite-list > .satellite:not(.focused) {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 .satellite.focused .satellite-orb {
   border-color: #92f0fa;
