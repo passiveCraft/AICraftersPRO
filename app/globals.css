@@ -426,13 +426,13 @@ summary:focus-visible,
   position: absolute;
   z-index: 1;
   transform: translate(-50%, -50%);
-  width: 22%;
-  max-width: 300px;
+  width: 25%;
+  max-width: 340px;
   display: flex;
   align-items: center;
   gap: 15px;
   text-align: left;
-  padding: 12px 14px;
+  padding: 10px 14px;
   background: linear-gradient(90deg, #0d1625ed, #11182a9c 80%, transparent);
   border: 1px solid transparent;
   border-radius: 60px 6px 6px 60px;
@@ -440,7 +440,7 @@ summary:focus-visible,
     border-color 0.25s,
     background 0.25s,
     box-shadow 0.25s;
-  min-height: 100px;
+  min-height: 0;
   transition:
     opacity 0.18s ease,
     visibility 0.18s ease,

@@ -10,10 +10,11 @@ const icons = [Radar, Store, Clapperboard, Crosshair, Users, Mail, MessageSquare
 
 function positionFor(index: number, total: number) {
   // Keep Systems visibly separated from the central core.
-  if (total === 1) return { x: 50, y: 10 };
+  if (total === 1) return { x: 50, y: 17 };
   const angle = -Math.PI / 2 + (Math.PI * 2 * index) / Math.max(total, 1);
   const radiusX = total > 8 ? 43 : 41;
-  const radiusY = total > 8 ? 42 : 40;
+  // Keep the card's full content box clear of the header and bottom edge.
+  const radiusY = total > 8 ? 36 : 34;
   return { x: 50 + Math.cos(angle) * radiusX, y: 50 + Math.sin(angle) * radiusY };
 }
 
